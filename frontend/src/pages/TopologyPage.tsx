@@ -126,7 +126,7 @@ const TopologyPage: React.FC = () => {
             <Progress percent={scanProgress} size="small" status="active" />
             <Typography.Text type="secondary" className="text-xs ml-2">
               Scanning... {devices.length} device(s) found
-            </Text>
+            </Typography.Text>
           </div>
         )}
       </Card>
