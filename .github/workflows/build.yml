@@ -55,11 +55,11 @@ jobs:
       - name: Create dist placeholder
         run: mkdir -p frontend/dist && echo "" > frontend/dist/.gitkeep
 
-      - name: Build frontend
-        run: cd frontend && npm run build
-
       - name: Generate Wails bindings
         run: wails generate module
+
+      - name: Build frontend
+        run: cd frontend && npm run build
 
       - name: Build Windows binary
         run: |
