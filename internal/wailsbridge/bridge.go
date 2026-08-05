@@ -268,6 +268,7 @@ func (b *Bridge) ExportPDF(scanID string) (string, error) {
 	devices, _ := b.store.ListDevices("")
 	var findings []*model.Finding
 	return export.GeneratePDF(scanID, "", devices, findings, "")
+}
 
 func (b *Bridge) ExportDrawIO(scanID string) (string, error) {
 	devices, _ := b.store.ListDevices("")
