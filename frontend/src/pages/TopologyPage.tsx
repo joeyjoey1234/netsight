@@ -69,7 +69,12 @@ const TopologyPage: React.FC = () => {
       onEvent('scan:device-found', (device: Device) => {
         addDevice(device);
       }),
-      onEvent('scan:complete', async (scanId: string) => {
+      onEvent('scan:complete', async (scanId: string, status: string) => {
+        if (status === 'failed') {
+          setStatus('failed');
+          message.error(`Scan ${scanId.slice(0, 8)} failed`);
+          return;
+        }
         setStatus('completed');
         try {
           const devs = await getDevices();

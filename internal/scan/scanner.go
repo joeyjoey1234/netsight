@@ -44,11 +44,19 @@ func (o *ScanOrchestrator) StopScan(scanID string) error {
 }
 
 func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset string) {
-	_ = preset
 	start := time.Now()
+	ports := DefaultPorts()
+	_ = preset
 
 	if o.OnProgress != nil {
 		o.OnProgress(scanID, 10)
+	}
+	liveHosts, err := PingSweep(ctx, subnet)
+	if err != nil {
+		if o.OnComplete != nil {
+			o.OnComplete(scanID, "failed")
+		}
+		return
 	}
 	liveHosts, err := PingSweep(ctx, subnet)
 	if err != nil {
@@ -89,7 +97,7 @@ func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset s
 			device.Vendor = LookupOUI(mac)
 		}
 
-		ports, _ := TCPSynScan(ctx, ip, DefaultPorts())
+		scanPorts, _ := TCPSynScan(ctx, ip, ports)
 		for _, p := range ports {
 			if p.State == "open" && isBannerable(p.Number) {
 				banner := GrabBanner(ctx, ip, p.Number)

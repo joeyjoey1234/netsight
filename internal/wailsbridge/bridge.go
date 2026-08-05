@@ -89,7 +89,7 @@ func (b *Bridge) StartScan(input ScanInput) (string, error) {
 		b.store.SaveDevice("", device)
 	}
 	b.scanner.OnComplete = func(scanID string, status string) {
-		runtime.EventsEmit(b.ctx, "scan:complete", scanID)
+		runtime.EventsEmit(b.ctx, "scan:complete", scanID, status)
 	}
 	return b.scanner.StartScan(input.Subnet, input.Preset)
 }
@@ -201,7 +201,10 @@ func (b *Bridge) RunIPerf(input IPerfInput) (*model.IPerfResult, error) {
 	if input.Duration == 0 {
 		input.Duration = 10
 	}
-	return nil, tools.RunIPerf(context.Background(), input.Target, input.ServerMode, input.Duration, "", func(result *model.IPerfResult) {
+	// On Windows, iperf3.exe is embedded at the same level as the app binary.
+	// Also try the embedded/ directory relative to the working directory.
+	iperfPath := "embedded/iperf3.exe"
+	return nil, tools.RunIPerf(context.Background(), input.Target, input.ServerMode, input.Duration, iperfPath, func(result *model.IPerfResult) {
 		runtime.EventsEmit(b.ctx, "iperf:result", result)
 	})
 }
@@ -265,7 +268,6 @@ func (b *Bridge) ExportPDF(scanID string) (string, error) {
 	devices, _ := b.store.ListDevices("")
 	var findings []*model.Finding
 	return export.GeneratePDF(scanID, "", devices, findings, "")
-}
 
 func (b *Bridge) ExportDrawIO(scanID string) (string, error) {
 	devices, _ := b.store.ListDevices("")

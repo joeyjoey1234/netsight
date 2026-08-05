@@ -57,6 +57,10 @@ export function exportDrawIO(scanId: string): Promise<string> {
   return Backend.ExportDrawIO(scanId);
 }
 
+export function exportPDF(scanId: string): Promise<string> {
+  return Backend.ExportPDF(scanId);
+}
+
 export function createProject(name: string): Promise<any> {
   return Backend.CreateProject(name);
 }
