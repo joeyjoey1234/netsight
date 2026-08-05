@@ -52,12 +52,20 @@ jobs:
         run: cd frontend && npm install
 
       - name: Generate Wails bindings
-        run: wails generate module
+        run: |
+          mkdir frontend\dist 2>nul
+          echo . > frontend\dist\.gitkeep
+          wails generate module
+        shell: cmd
 
       - name: Verify bindings exist
         run: |
-          echo "=== Checking wailsjs ==="
-          dir /s /b frontend\wailsjs\ 2>nul || dir /s /b wailsjs\ 2>nul || echo "No wailsjs directory found"
+          echo === Checking frontend/wailsjs ===
+          dir /s /b frontend\wailsjs\ 2>nul
+          if %errorlevel% neq 0 echo No frontend/wailsjs directory
+          echo === Checking root wailsjs ===
+          dir /s /b wailsjs\ 2>nul
+          if %errorlevel% neq 0 echo No root wailsjs directory
         shell: cmd
 
       - name: Build frontend
