@@ -1,8 +1,6 @@
-// API layer — imports Wails runtime bindings generated at build time.
-// @ts-nocheck — bindings are .js files, TS can't check them statically.
-
-import * as Backend from '../../wailsjs/go/main/App';
-import { EventsOn, EventsOff } from '../../wailsjs/runtime';
+// @ts-nocheck
+import * as Backend from '../../wailsjs/go/wailsbridge/Bridge';
+import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
 
 export const backend = Backend;
 
