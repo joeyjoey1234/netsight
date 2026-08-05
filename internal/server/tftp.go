@@ -27,6 +27,7 @@ func startTFTP(ctx context.Context, config *model.ServerConfig, onStatus func(*m
 	}
 
 	addr := fmt.Sprintf("%s:%d", config.Interface, port)
+	_ = addr
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{
 		IP:   net.ParseIP(config.Interface),
 		Port: port,
@@ -141,7 +142,7 @@ func handleTFTPRead(ctx context.Context, conn *net.UDPConn, remoteAddr *net.UDPA
 		// Wait for ACK
 		ackBuf := make([]byte, 4)
 		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-		n, _, err := conn.ReadFromUDP(ackBuf)
+		n, _, err = conn.ReadFromUDP(ackBuf)
 		if err != nil || n < 4 || ackBuf[1] != tftpACK {
 			continue // Retry or timeout
 		}

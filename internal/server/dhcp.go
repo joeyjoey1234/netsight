@@ -149,6 +149,7 @@ func (s *DHCPServer) handleDHCPPacket(packet []byte, remoteAddr *net.UDPAddr) []
 func (s *DHCPServer) buildDHCPOffer(packet []byte) []byte {
 	mac := extractClientMAC(packet)
 	ip := s.allocateIP(string(mac))
+	_ = ip
 
 	offer := make([]byte, 300)
 	copy(offer[0:4], packet[0:4])
