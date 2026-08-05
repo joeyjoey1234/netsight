@@ -1,0 +1,56 @@
+project_name: netsight
+
+before:
+  hooks:
+    - go mod tidy
+    - cd frontend && npm install && npm run build
+
+builds:
+  - id: netsight-windows
+    main: .
+    goos:
+      - windows
+    goarch:
+      - amd64
+    env:
+      - CGO_ENABLED=1
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+    hooks:
+      post:
+        - cmd: powershell
+          args:
+            - -Command
+            - |
+              if (Test-Path "embedded/npcap-installer.exe") {
+                Copy-Item "embedded/npcap-installer.exe" "dist/netsight-windows_amd64_v1/"
+              }
+
+archives:
+  - id: netsight-archive
+    builds:
+      - netsight-windows
+    format: zip
+    name_template: "netsight-{{.Version}}-windows-amd64"
+    files:
+      - README.md
+      - LICENSE
+      - embedded/npcap-installer.exe
+
+release:
+  draft: true
+  prerelease: auto
+  name_template: "NetSight {{.Version}}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - Merge pull request
+      - Merge branch
