@@ -3,6 +3,7 @@ package export
 import (
 	"fmt"
 	"netsight/internal/model"
+	"os"
 	"strings"
 	"time"
 )
@@ -28,6 +29,11 @@ func GeneratePDF(scanID string, subnet string, devices []*model.Device, findings
 		Devices:       devices,
 		Findings:      findings,
 		TopologyImage: topologyImage,
+	}
+
+	content := buildReportContent(scanID, subnet, devices, findings)
+	if err := os.WriteFile(outputPath, content, 0644); err != nil {
+		return "", fmt.Errorf("failed to write PDF report: %w", err)
 	}
 
 	_ = report

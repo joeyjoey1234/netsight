@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func defaultPorts() []int {
+func DefaultPorts() []int {
 	return []int{21, 22, 23, 25, 53, 80, 139, 443, 445, 3389, 8080, 8443}
 }
 

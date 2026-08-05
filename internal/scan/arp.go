@@ -2,7 +2,10 @@ package scan
 
 import (
 	"context"
+	"fmt"
 	"net"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -48,26 +51,85 @@ func ARPScan(ctx context.Context, subnet string) (map[string]string, error) {
 		}(ip)
 	}
 	wg.Wait()
+
+	if len(table) == 0 {
+		cacheEntries := readARPCache()
+		for _, ipStr := range ips {
+			select {
+			case <-ctx.Done():
+				return table, ctx.Err()
+			default:
+			}
+			if mac, ok := cacheEntries[ipStr.String()]; ok {
+				mu.Lock()
+				table[ipStr.String()] = mac
+				mu.Unlock()
+			}
+		}
+	}
+
 	return table, nil
 }
 
 func arpLookup(ip net.IP) string {
-	conn, err := net.DialTimeout("tcp", ip.String()+":7", 500*time.Millisecond)
+	dstAddr := &net.UDPAddr{
+		IP:   ip,
+		Port: 7,
+	}
+
+	conn, err := net.DialTimeout("udp", dstAddr.String(), 300*time.Millisecond)
 	if err != nil {
 		return ""
 	}
-	defer conn.Close()
+	conn.Close()
 
-	interfaces, _ := net.Interfaces()
-	for _, iface := range interfaces {
-		addrs, _ := iface.Addrs()
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok {
-				if ipnet.Contains(ip) {
-					return iface.HardwareAddr.String()
+	time.Sleep(50 * time.Millisecond)
+
+	cacheEntries := readARPCache()
+	if mac, ok := cacheEntries[ip.String()]; ok {
+		return mac
+	}
+
+	return ""
+}
+
+func readARPCache() map[string]string {
+	result := make(map[string]string)
+
+	out, err := exec.Command("arp", "-a").Output()
+	if err != nil {
+		return result
+	}
+
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			ipStr := strings.Trim(field, "()")
+			if net.ParseIP(ipStr) != nil && i+1 < len(fields) {
+				mac := strings.TrimSpace(fields[i+1])
+				mac = strings.ReplaceAll(mac, "-", ":")
+				if isValidMAC(mac) {
+					result[ipStr] = mac
 				}
 			}
 		}
 	}
-	return ""
+
+	return result
 }
+
+func isValidMAC(mac string) bool {
+	_, err := net.ParseMAC(mac)
+	return err == nil
+}
+
+func arpLookupByPing(ip net.IP) {
+	exec.Command("ping", "-c", "1", "-W", "1", ip.String()).Run()
+}
+
+var _ = fmt.Println

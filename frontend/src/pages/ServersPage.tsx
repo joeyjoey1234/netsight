@@ -21,6 +21,7 @@ const ServersPage: React.FC = () => {
 
   useEffect(() => {
     const unsub = onEvent('server:status', (state: ServerState) => {
+      console.error('[ServerPage] server:status received:', state);
       updateServer(state);
     });
     return unsub;

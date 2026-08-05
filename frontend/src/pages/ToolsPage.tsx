@@ -1,10 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Input, Button, Select, Space, Row, Col, Table, Descriptions, Statistic, message, Typography } from 'antd';
+import { Card, Input, Button, Select, Space, Row, Col, Table, Descriptions, Statistic, message, Typography, Tag } from 'antd';
 import { SendOutlined, NodeIndexOutlined, SearchOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { runPing, runTraceroute, runNSLookup, wakeOnLAN, runIPerf, getNetworkInfo, onEvent } from '../hooks/api';
 import type { PingResult, Hop } from '../types';
 
 const { Text } = Typography;
+
+function maskToDotted(mask: number): string {
+  const allOnes = 0xFFFFFFFF;
+  const bitmask = mask === 0 ? 0 : ~(allOnes >>> mask) >>> 0;
+  return [(bitmask >>> 24) & 255, (bitmask >>> 16) & 255, (bitmask >>> 8) & 255, bitmask & 255].join('.');
+}
 
 const ToolsPage: React.FC = () => {
   // Ping
@@ -39,8 +45,9 @@ const ToolsPage: React.FC = () => {
   const [latencyRunning, setLatencyRunning] = useState(false);
   const [latencyPoints, setLatencyPoints] = useState<number[]>([]);
 
-  // Subnet
-  const [subnetCidr, setSubnetCidr] = useState('');
+  // Subnet Planner
+  const [subnetHosts, setSubnetHosts] = useState<number | null>(null);
+  const [subnetBase, setSubnetBase] = useState('');
   const [subnetResult, setSubnetResult] = useState<any>(null);
 
   useEffect(() => {
@@ -106,7 +113,6 @@ const ToolsPage: React.FC = () => {
 
   const handleLatencyToggle = () => {
     setLatencyRunning(!latencyRunning);
-    // Latency monitoring uses periodic RunPing in a loop
     if (!latencyRunning && latencyTarget) {
       const interval = setInterval(async () => {
         try {
@@ -117,6 +123,23 @@ const ToolsPage: React.FC = () => {
     } else {
       clearInterval((window as any).__latencyInterval);
     }
+  };
+
+  const calculateSubnet = () => {
+    const hosts = subnetHosts || 0;
+    if (hosts <= 0) {
+      message.warning('Enter a valid number of hosts');
+      return;
+    }
+    const mask = 32 - Math.ceil(Math.log2(hosts + 2));
+    const total = Math.pow(2, 32 - mask);
+    const usable = Math.max(0, total - 2);
+    setSubnetResult({
+      cidr: mask,
+      totalHosts: total,
+      usableHosts: usable,
+      netmask: maskToDotted(mask),
+    });
   };
 
   return (
@@ -188,7 +211,10 @@ const ToolsPage: React.FC = () => {
         <Col span={12}>
           <Card title="iPerf" size="small" className="mb-4">
             <Space direction="vertical" style={{ width: '100%' }}>
-              <Input placeholder="Target IP" value={iperfTarget} onChange={e => setIperfTarget(e.target.value)} />
+              <Space>
+                <Input placeholder="Target IP" value={iperfTarget} onChange={e => setIperfTarget(e.target.value)} />
+                <Tag color="blue">iperf.he.net</Tag>
+              </Space>
               <Space>
                 <Select value={iperfMode} onChange={setIperfMode} style={{ width: 100 }} options={[
                   { value: 'client', label: 'Client' }, { value: 'server', label: 'Server' },
@@ -229,21 +255,26 @@ const ToolsPage: React.FC = () => {
         </Col>
 
         <Col span={12}>
-          <Card title="Subnet Calculator" size="small" className="mb-4">
+          <Card title="Subnet Planner" size="small" className="mb-4">
             <Space direction="vertical" style={{ width: '100%' }}>
-              <Input placeholder="e.g. 192.168.1.0/24" value={subnetCidr} onChange={e => setSubnetCidr(e.target.value)} />
-              <Button type="primary" onClick={() => {
-                const parts = subnetCidr.split('/');
-                const ipOctets = parts[0].split('.').map(Number);
-                const mask = parseInt(parts[1]);
-                const total = Math.pow(2, 32 - mask);
-                setSubnetResult({ cidr: subnetCidr, totalHosts: total, usableHosts: Math.max(0, total - 2) });
-              }}>Calculate</Button>
+              <Input
+                type="number"
+                placeholder="How many hosts?"
+                value={subnetHosts ?? ''}
+                onChange={e => setSubnetHosts(Number(e.target.value) || null)}
+              />
+              <Input
+                placeholder="Base network (optional, e.g. 10.0.0.0)"
+                value={subnetBase}
+                onChange={e => setSubnetBase(e.target.value)}
+              />
+              <Button type="primary" onClick={calculateSubnet}>Calculate Subnet</Button>
               {subnetResult && (
                 <Descriptions size="small" column={1}>
-                  <Descriptions.Item label="CIDR">{subnetResult.cidr}</Descriptions.Item>
+                  <Descriptions.Item label="CIDR">/{subnetResult.cidr}</Descriptions.Item>
                   <Descriptions.Item label="Total Hosts">{subnetResult.totalHosts}</Descriptions.Item>
                   <Descriptions.Item label="Usable Hosts">{subnetResult.usableHosts}</Descriptions.Item>
+                  <Descriptions.Item label="Netmask">{subnetResult.netmask}</Descriptions.Item>
                 </Descriptions>
               )}
             </Space>

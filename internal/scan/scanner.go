@@ -89,7 +89,7 @@ func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset s
 			device.Vendor = LookupOUI(mac)
 		}
 
-		ports, _ := TCPSynScan(ctx, ip, defaultPorts())
+		ports, _ := TCPSynScan(ctx, ip, DefaultPorts())
 		for _, p := range ports {
 			if p.State == "open" && isBannerable(p.Number) {
 				banner := GrabBanner(ctx, ip, p.Number)

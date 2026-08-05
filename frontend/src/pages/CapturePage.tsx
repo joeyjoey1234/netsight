@@ -1,13 +1,35 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, Input, Space, Table, Tag, Statistic, Row, Col, Empty, message } from 'antd';
+import { Card, Button, Input, Space, Table, Tag, Statistic, Row, Col, Select, Empty, message } from 'antd';
 import { PlayCircleOutlined, PauseCircleOutlined, DownloadOutlined } from '@ant-design/icons';
 import { useCaptureStore } from '../stores/captureStore';
-import { startPacketCapture, stopPacketCapture, onEvent } from '../hooks/api';
+import { startPacketCapture, stopPacketCapture, onEvent, getAllNetworkInfo } from '../hooks/api';
 import type { PacketSummary } from '../types';
+
+interface InterfaceOption {
+  value: string;
+  label: string;
+}
 
 const CapturePage: React.FC = () => {
   const { isCapturing, packets, packetsPerSec, bytesPerSec, filter, setFilter, setCapturing, addPacket, setStats, clear } = useCaptureStore();
   const [iface, setIface] = useState('');
+  const [interfaces, setInterfaces] = useState<InterfaceOption[]>([]);
+
+  useEffect(() => {
+    getAllNetworkInfo().then((infos: any[]) => {
+      const opts: InterfaceOption[] = (infos || []).map((info: any) => {
+        const firstIpv4 = (info.ips || []).find((ip: string) => !ip.includes(':'));
+        return {
+          value: info.name || '',
+          label: `${info.name} (${firstIpv4 || 'no IP'})`,
+        };
+      });
+      setInterfaces(opts);
+      if (opts.length > 0 && !iface) {
+        setIface(opts[0].value);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     const unsubs = [
@@ -54,7 +76,15 @@ const CapturePage: React.FC = () => {
     <div className="h-full flex flex-col p-2">
       <Card size="small" className="mb-2 flex-shrink-0">
         <Space>
-          <Input placeholder="Interface" value={iface} onChange={e => setIface(e.target.value)} style={{ width: 160 }} />
+          <Select
+            placeholder="Interface"
+            value={iface || undefined}
+            onChange={setIface}
+            style={{ width: 220 }}
+            options={interfaces}
+            notFoundContent="No interfaces found"
+          />
+          {/* TODO: dynamic protocol filter hints */}
           <Input placeholder="BPF filter (e.g. tcp port 80)" value={filter} onChange={e => setFilter(e.target.value)} style={{ width: 240 }} />
           <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleStart} disabled={isCapturing}>Start</Button>
           <Button icon={<PauseCircleOutlined />} onClick={handleStop} disabled={!isCapturing}>Stop</Button>

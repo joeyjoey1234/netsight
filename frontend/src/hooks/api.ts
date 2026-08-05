@@ -66,8 +66,21 @@ export function createProject(name: string): Promise<any> {
   return Backend.CreateProject(name);
 }
 
+export function loadProject(id: string): Promise<any> {
+  return Backend.LoadProject ? Backend.LoadProject(id) : Promise.resolve(null);
+}
+
 export function getNetworkInfo(): Promise<any> {
   return Backend.GetNetworkInfo();
+}
+
+export function getAvailableSubnets(): Promise<string[]> {
+  return Backend.GetAvailableSubnets ? Backend.GetAvailableSubnets() : Promise.resolve(['192.168.1.0/24']);
+}
+
+export function getAllNetworkInfo(): Promise<any[]> {
+  return Backend.GetAllNetworkInfo ? Backend.GetAllNetworkInfo() :
+    Backend.GetNetworkInfo().then((info: any) => Array.isArray(info) ? info : [info]);
 }
 
 export function getDevices(): Promise<any[]> {
@@ -76,4 +89,8 @@ export function getDevices(): Promise<any[]> {
 
 export function getScanHistory(): Promise<any[]> {
   return Backend.GetScanHistory();
+}
+
+export function listProjects(): Promise<any[]> {
+  return Backend.ListProjects ? Backend.ListProjects() : Promise.resolve([]);
 }

@@ -1,10 +1,10 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { Card, Button, Space, Input, Select, Progress, Drawer, Descriptions, Tag, Empty, Typography, message } from 'antd';
-import { PlayCircleOutlined, StopOutlined, ReloadOutlined, ExportOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, StopOutlined, ReloadOutlined, ExportOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useScanStore } from '../stores/scanStore';
 import { useThemeStore } from '../stores/themeStore';
 import TopologyMap from '../components/topology/TopologyMap';
-import { startScan, stopScan, exportDrawIO, onEvent } from '../hooks/api';
+import { startScan, stopScan, exportDrawIO, onEvent, getAvailableSubnets, getDevices } from '../hooks/api';
 import type { Device } from '../types';
 
 const { Text } = Typography;
@@ -46,12 +46,21 @@ const TopologyPage: React.FC = () => {
           setScanId, setProgress, setStatus, addDevice, setDevices, addFinding, reset } = useScanStore();
   const { isDark } = useThemeStore();
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
-  const [subnetInput, setSubnetInput] = useState('192.168.1.0/24');
-  const [preset, setPreset] = useState('quick');
+  const [selectedSubnet, setSelectedSubnet] = useState('192.168.1.0/24');
+  const [availableSubnets, setAvailableSubnets] = useState<string[]>([]);
+  const [longMinutes, setLongMinutes] = useState<number | null>(null);
+  const [showLongInput, setShowLongInput] = useState(false);
 
   const isRunning = scanStatus === 'running';
 
-  // Subscribe to backend events
+  useEffect(() => {
+    getAvailableSubnets().then(subs => {
+      const subnets = subs.length > 0 ? subs : ['192.168.1.0/24'];
+      setAvailableSubnets(subnets);
+      setSelectedSubnet(subnets[0]);
+    });
+  }, []);
+
   useEffect(() => {
     const unsubs = [
       onEvent('scan:progress', (_scanId: string, progress: number) => {
@@ -60,16 +69,22 @@ const TopologyPage: React.FC = () => {
       onEvent('scan:device-found', (device: Device) => {
         addDevice(device);
       }),
-      onEvent('scan:complete', (scanId: string) => {
+      onEvent('scan:complete', async (scanId: string) => {
         setStatus('completed');
-        message.success(`Scan ${scanId.slice(0, 8)} complete — ${devices.length} devices found`);
+        try {
+          const devs = await getDevices();
+          setDevices(devs);
+          message.success(`Scan ${scanId.slice(0, 8)} complete — ${devs.length} devices found`);
+        } catch {
+          message.success(`Scan ${scanId.slice(0, 8)} complete`);
+        }
       }),
       onEvent('survey:finding', (finding: any) => {
         addFinding(finding);
       }),
     ];
     return () => unsubs.forEach(fn => fn());
-  }, [setProgress, addDevice, setStatus, addFinding]);
+  }, [setProgress, addDevice, setStatus, setDevices, addFinding]);
 
   const graphNodes = useMemo(() => devices.map(d => ({
     id: d.id,
@@ -86,9 +101,9 @@ const TopologyPage: React.FC = () => {
     setSelectedDevice(device || null);
   }, [devices]);
 
-  const handleScan = async () => {
+  const runScan = async (subnet: string, preset: string) => {
     try {
-      const id = await startScan(subnetInput, preset);
+      const id = await startScan(subnet, preset);
       setScanId(id);
       setStatus('running');
       setProgress(0);
@@ -96,6 +111,20 @@ const TopologyPage: React.FC = () => {
       message.error(`Scan failed: ${err?.message || err}`);
     }
   };
+
+  const handleQuickSurvey = () => runScan(selectedSubnet, 'quick');
+  const handleShortSurvey = () => runScan(selectedSubnet, 'short');
+  const handleLongSurvey = () => {
+    if (longMinutes && longMinutes > 0) {
+      runScan(selectedSubnet, 'long');
+      setShowLongInput(false);
+      setLongMinutes(null);
+    } else {
+      setShowLongInput(!showLongInput);
+    }
+  };
+
+  const handleScan = () => runScan(selectedSubnet, 'manual');
 
   const handleStop = async () => {
     if (!activeScanId) return;
@@ -123,37 +152,59 @@ const TopologyPage: React.FC = () => {
     <div className="h-full flex flex-col p-2">
       <Card size="small" className="mb-2 flex-shrink-0">
         <Space wrap>
-          <Input
-            placeholder="Subnet (e.g. 192.168.1.0/24)"
-            value={subnetInput}
-            onChange={e => setSubnetInput(e.target.value)}
-            style={{ width: 200 }}
-            disabled={isRunning}
-          />
-          <Select
-            value={preset}
-            onChange={setPreset}
-            style={{ width: 130 }}
-            disabled={isRunning}
-            options={[
-              { value: 'quick', label: 'Quick (3m)' },
-              { value: 'short', label: 'Short (10m)' },
-              { value: 'long', label: 'Long' },
-            ]}
-          />
-          <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleScan} disabled={isRunning}>
-            Scan
+          <Button icon={<ThunderboltOutlined />} onClick={handleQuickSurvey} disabled={isRunning}>
+            Quick Survey (3m)
           </Button>
-          <Button danger icon={<StopOutlined />} onClick={handleStop} disabled={!isRunning}>
-            Stop
+          <Button icon={<ThunderboltOutlined />} onClick={handleShortSurvey} disabled={isRunning}>
+            Short Survey (10m)
           </Button>
-          <Button icon={<ReloadOutlined />} onClick={reset} disabled={isRunning}>
-            Clear
-          </Button>
-          <Button icon={<ExportOutlined />} onClick={handleExportDrawIO} disabled={devices.length === 0}>
-            Export Draw.io
-          </Button>
+          {showLongInput ? (
+            <Space.Compact>
+              <Input
+                type="number"
+                placeholder="Minutes"
+                style={{ width: 100 }}
+                value={longMinutes ?? ''}
+                onChange={e => setLongMinutes(Number(e.target.value) || null)}
+                disabled={isRunning}
+              />
+              <Button icon={<ThunderboltOutlined />} onClick={handleLongSurvey} disabled={isRunning}>
+                Start
+              </Button>
+            </Space.Compact>
+          ) : (
+            <Button icon={<ThunderboltOutlined />} onClick={handleLongSurvey} disabled={isRunning}>
+              Long Survey
+            </Button>
+          )}
         </Space>
+
+        <div className="mt-2">
+          <Text type="secondary" className="text-xs mr-2">Subnet Scan:</Text>
+          <Space wrap>
+            <Select
+              value={selectedSubnet}
+              onChange={setSelectedSubnet}
+              style={{ width: 220 }}
+              disabled={isRunning}
+              options={availableSubnets.map(s => ({ value: s, label: s }))}
+              notFoundContent={<Text type="secondary">No subnets detected</Text>}
+            />
+            <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleScan} disabled={isRunning}>
+              Scan
+            </Button>
+            <Button danger icon={<StopOutlined />} onClick={handleStop} disabled={!isRunning}>
+              Stop
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={reset} disabled={isRunning}>
+              Clear
+            </Button>
+            <Button icon={<ExportOutlined />} onClick={handleExportDrawIO} disabled={devices.length === 0}>
+              Export Draw.io
+            </Button>
+          </Space>
+        </div>
+
         {isRunning && (
           <div className="mt-2">
             <Progress percent={scanProgress} size="small" status="active" />
