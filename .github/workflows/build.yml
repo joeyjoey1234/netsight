@@ -56,7 +56,8 @@ jobs:
         run: mkdir -p frontend/dist && echo "" > frontend/dist/.gitkeep
 
       - name: Generate Wails bindings
-        run: wails generate module && dir /s /b wailsjs 2>nul & dir /s /b frontend\wailsjs 2>nul & echo Done
+        run: wails generate module
+        shell: cmd
 
       - name: Build frontend
         run: cd frontend && npm run build
