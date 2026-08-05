@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { Card, Button, Space, Input, Select, Progress, Drawer, Descriptions, Tag, Empty, Text } from 'antd';
+import { Card, Button, Space, Input, Select, Progress, Drawer, Descriptions, Tag, Empty, Typography } from 'antd';
 import { PlayCircleOutlined, StopOutlined, ReloadOutlined, ExportOutlined } from '@ant-design/icons';
 import { useScanStore } from '../stores/scanStore';
 import { useThemeStore } from '../stores/themeStore';
@@ -124,7 +124,7 @@ const TopologyPage: React.FC = () => {
         {isRunning && (
           <div className="mt-2">
             <Progress percent={scanProgress} size="small" status="active" />
-            <Text type="secondary" className="text-xs ml-2">
+            <Typography.Text type="secondary" className="text-xs ml-2">
               Scanning... {devices.length} device(s) found
             </Text>
           </div>

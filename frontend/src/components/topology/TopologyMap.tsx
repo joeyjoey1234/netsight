@@ -13,6 +13,7 @@ export interface TopologyNode {
 }
 
 export interface TopologyEdge {
+  id: string;
   from: string;
   to: string;
   label: string;
@@ -87,7 +88,7 @@ const TopologyMap: React.FC<TopologyMapProps> = ({ nodes, edges, onNodeClick, da
       },
     };
 
-    const network = new Network(containerRef.current, { nodes: nodeData, edges: edgeData }, options);
+    const network = new Network(containerRef.current, { nodes: nodeData, edges: edgeData }, options as any);
     networkRef.current = network;
 
     if (onNodeClick) {
@@ -99,7 +100,7 @@ const TopologyMap: React.FC<TopologyMapProps> = ({ nodes, edges, onNodeClick, da
     }
 
     network.once('stabilizationIterationsDone', () => {
-      network.fit({ animation: { duration: 1000 } });
+      network.fit({ animation: { duration: 1000, easingFunction: 'easeInOutQuad' } as any });
     });
 
     return () => {
