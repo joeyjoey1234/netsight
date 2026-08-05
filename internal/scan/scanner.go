@@ -58,13 +58,6 @@ func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset s
 		}
 		return
 	}
-	liveHosts, err := PingSweep(ctx, subnet)
-	if err != nil {
-		if o.OnComplete != nil {
-			o.OnComplete(scanID, "failed")
-		}
-		return
-	}
 
 	if o.OnProgress != nil {
 		o.OnProgress(scanID, 30)
@@ -98,7 +91,7 @@ func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset s
 		}
 
 		scanPorts, _ := TCPSynScan(ctx, ip, ports)
-		for _, p := range ports {
+		for _, p := range scanPorts {
 			if p.State == "open" && isBannerable(p.Number) {
 				banner := GrabBanner(ctx, ip, p.Number)
 				if banner != "" {
