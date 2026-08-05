@@ -66,7 +66,7 @@ func (b *Bridge) GetNetworkInfo() (*model.InterfaceInfo, error) {
 }
 
 func (b *Bridge) GetAllNetworkInfo() ([]*model.InterfaceInfo, error) {
-	return tools.GetAllInterfaces()
+	return tools.GetAllInterfaces(), nil
 }
 
 func (b *Bridge) GetAvailableSubnets() ([]string, error) {
