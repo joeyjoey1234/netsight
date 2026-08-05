@@ -1,79 +1,104 @@
+// Stub implementations matching the Go backend method signatures.
+// Replaced by wailsjs/go/main/App during `wails generate module`.
+
 export function GetGreet(name: string): Promise<string> {
-  console.log(`[Wails App] GetGreet(${name})`);
+  console.log(`[Wails] Greet(${name})`);
   return Promise.resolve(`Hello ${name} from NetSight!`);
 }
 
-export function StartScan(subnet: string, preset: string): Promise<string> {
-  console.log(`[Wails App] StartScan(${subnet}, ${preset})`);
+export function StartScan(input: { subnet: string; preset: string }): Promise<string> {
+  console.log(`[Wails] StartScan(${input.subnet}, ${input.preset})`);
   return Promise.resolve('scan-001');
 }
 
+export function StopScan(scanId: string): Promise<void> {
+  console.log(`[Wails] StopScan(${scanId})`);
+  return Promise.resolve();
+}
+
 export function GetDevices(): Promise<any[]> {
-  console.log('[Wails App] GetDevices');
+  console.log('[Wails] GetDevices');
   return Promise.resolve([]);
 }
 
 export function GetScanHistory(): Promise<any[]> {
-  console.log('[Wails App] GetScanHistory');
+  console.log('[Wails] GetScanHistory');
   return Promise.resolve([]);
 }
 
 export function StartPacketCapture(iface: string, filter: string): Promise<string> {
-  console.log(`[Wails App] StartPacketCapture(${iface}, ${filter})`);
+  console.log(`[Wails] StartPacketCapture(${iface}, ${filter})`);
   return Promise.resolve('capture-001');
 }
 
-export function RunPing(target: string, count: number): Promise<any> {
-  console.log(`[Wails App] RunPing(${target}, ${count})`);
-  return Promise.resolve(null);
+export function StopPacketCapture(): Promise<void> {
+  console.log('[Wails] StopPacketCapture');
+  return Promise.resolve();
 }
 
-export function RunTraceroute(target: string, mode: string): Promise<any[]> {
-  console.log(`[Wails App] RunTraceroute(${target}, ${mode})`);
+export function RunPing(input: { target: string; count: number }): Promise<any> {
+  console.log(`[Wails] RunPing(${input.target}, ${input.count})`);
+  return Promise.resolve({ target: input.target, latencyMs: 1.5, ttl: 64, bytes: 32, timedOut: false, sequence: 0 });
+}
+
+export function RunTraceroute(input: { target: string; mode: string }): Promise<any[]> {
+  console.log(`[Wails] RunTraceroute(${input.target}, ${input.mode})`);
   return Promise.resolve([]);
 }
 
-export function StartServer(serverType: string, config: any): Promise<void> {
-  console.log(`[Wails App] StartServer(${serverType})`, config);
+export function RunNSLookup(query: string, types: string[]): Promise<any[]> {
+  console.log(`[Wails] RunNSLookup(${query}, [${types}])`);
+  return Promise.resolve([]);
+}
+
+export function StartServer(serverType: string, config: Record<string, any>): Promise<void> {
+  console.log(`[Wails] StartServer(${serverType})`, config);
   return Promise.resolve();
 }
 
 export function StopServer(serverType: string): Promise<void> {
-  console.log(`[Wails App] StopServer(${serverType})`);
+  console.log(`[Wails] StopServer(${serverType})`);
   return Promise.resolve();
 }
 
 export function ExportPDF(scanID: string): Promise<string> {
-  console.log(`[Wails App] ExportPDF(${scanID})`);
-  return Promise.resolve('');
+  console.log(`[Wails] ExportPDF(${scanID})`);
+  return Promise.resolve('report.pdf');
 }
 
 export function ExportDrawIO(scanID: string): Promise<string> {
-  console.log(`[Wails App] ExportDrawIO(${scanID})`);
-  return Promise.resolve('');
+  console.log(`[Wails] ExportDrawIO(${scanID})`);
+  return Promise.resolve('topology.drawio');
 }
 
 export function GetNetworkInfo(): Promise<any> {
-  console.log('[Wails App] GetNetworkInfo');
-  return Promise.resolve(null);
+  console.log('[Wails] GetNetworkInfo');
+  return Promise.resolve({
+    name: 'Ethernet',
+    ips: ['192.168.1.100'],
+    mac: 'aa:bb:cc:dd:ee:ff',
+    gateway: '192.168.1.1',
+    dns: ['8.8.8.8'],
+    mtu: 1500,
+  });
 }
 
 export function CreateProject(name: string): Promise<any> {
-  console.log(`[Wails App] CreateProject(${name})`);
-  return Promise.resolve(null);
+  console.log(`[Wails] CreateProject(${name})`);
+  return Promise.resolve({ id: 'proj-001', name, created: new Date().toISOString() });
 }
 
 export function LoadProject(id: string): Promise<any> {
-  console.log(`[Wails App] LoadProject(${id})`);
+  console.log(`[Wails] LoadProject(${id})`);
   return Promise.resolve(null);
 }
 
 export function WakeOnLAN(mac: string): Promise<void> {
-  console.log(`[Wails App] WakeOnLAN(${mac})`);
+  console.log(`[Wails] WakeOnLAN(${mac})`);
   return Promise.resolve();
 }
 
-export function RunIPerf(target: string, serverMode: boolean, duration: number): Promise<any> {
-  console.log(`[Wails App] RunIPerf(${target}, ${serverMode}, ${duration})`);
-  return Promise.resolve(null);
+export function RunIPerf(input: { target: string; serverMode: boolean; duration: number }): Promise<any> {
+  console.log(`[Wails] RunIPerf(${input.target}, server=${input.serverMode}, ${input.duration}s)`);
+  return Promise.resolve({ bandwidthBps: 1000000000, transferBytes: 1250000000, interval: input.duration, jitterMs: 0.5 });
 }

@@ -1,24 +1,13 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import { Card, Button, Space, Input, Select, Progress, Drawer, Descriptions, Tag, Empty, Typography } from 'antd';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { Card, Button, Space, Input, Select, Progress, Drawer, Descriptions, Tag, Empty, Typography, message } from 'antd';
 import { PlayCircleOutlined, StopOutlined, ReloadOutlined, ExportOutlined } from '@ant-design/icons';
 import { useScanStore } from '../stores/scanStore';
 import { useThemeStore } from '../stores/themeStore';
 import TopologyMap from '../components/topology/TopologyMap';
+import { startScan, stopScan, exportDrawIO, onEvent } from '../hooks/api';
 import type { Device } from '../types';
 
-function devicesToTopologyNodes(devices: Device[]) {
-  return devices.map(d => ({
-    id: d.id,
-    label: d.hostname || (d.ips.length > 0 ? d.ips[0] : d.mac),
-    title: formatDeviceTooltip(d),
-    group: roleToGroup(d.role),
-    color: roleToColor(d.role),
-    shape: 'dot' as const,
-    size: 25,
-  }));
-}
-
-const placeholderEdges: any[] = [];
+const { Text } = Typography;
 
 function formatDeviceTooltip(d: Device): string {
   const parts: string[] = [];
@@ -53,14 +42,44 @@ function roleToColor(role: string): string {
 }
 
 const TopologyPage: React.FC = () => {
-  const { scanStatus, scanProgress, devices, reset } = useScanStore();
+  const { activeScanId, scanStatus, scanProgress, devices, findings,
+          setScanId, setProgress, setStatus, addDevice, setDevices, addFinding, reset } = useScanStore();
   const { isDark } = useThemeStore();
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [subnetInput, setSubnetInput] = useState('192.168.1.0/24');
   const [preset, setPreset] = useState('quick');
 
   const isRunning = scanStatus === 'running';
-  const graphNodes = useMemo(() => devicesToTopologyNodes(devices), [devices]);
+
+  // Subscribe to backend events
+  useEffect(() => {
+    const unsubs = [
+      onEvent('scan:progress', (_scanId: string, progress: number) => {
+        setProgress(progress);
+      }),
+      onEvent('scan:device-found', (device: Device) => {
+        addDevice(device);
+      }),
+      onEvent('scan:complete', (scanId: string) => {
+        setStatus('completed');
+        message.success(`Scan ${scanId.slice(0, 8)} complete — ${devices.length} devices found`);
+      }),
+      onEvent('survey:finding', (finding: any) => {
+        addFinding(finding);
+      }),
+    ];
+    return () => unsubs.forEach(fn => fn());
+  }, [setProgress, addDevice, setStatus, addFinding]);
+
+  const graphNodes = useMemo(() => devices.map(d => ({
+    id: d.id,
+    label: d.hostname || (d.ips.length > 0 ? d.ips[0] : d.mac),
+    title: formatDeviceTooltip(d),
+    group: roleToGroup(d.role),
+    color: roleToColor(d.role),
+    shape: 'dot' as const,
+    size: 25,
+  })), [devices]);
 
   const handleNodeClick = useCallback((nodeId: string) => {
     const device = devices.find(d => d.id === nodeId);
@@ -68,12 +87,37 @@ const TopologyPage: React.FC = () => {
   }, [devices]);
 
   const handleScan = async () => {
-    console.log('Starting scan:', subnetInput, preset);
+    try {
+      const id = await startScan(subnetInput, preset);
+      setScanId(id);
+      setStatus('running');
+      setProgress(0);
+    } catch (err: any) {
+      message.error(`Scan failed: ${err?.message || err}`);
+    }
   };
 
   const handleStop = async () => {
-    console.log('Stopping scan');
+    if (!activeScanId) return;
+    try {
+      await stopScan(activeScanId);
+      setStatus('idle');
+    } catch (err: any) {
+      message.error(`Stop failed: ${err?.message || err}`);
+    }
   };
+
+  const handleExportDrawIO = async () => {
+    if (!activeScanId) return;
+    try {
+      const path = await exportDrawIO(activeScanId);
+      message.success(`Exported to ${path}`);
+    } catch (err: any) {
+      message.error(`Export failed: ${err?.message || err}`);
+    }
+  };
+
+  const placeholderEdges: any[] = [];
 
   return (
     <div className="h-full flex flex-col p-2">
@@ -97,36 +141,25 @@ const TopologyPage: React.FC = () => {
               { value: 'long', label: 'Long' },
             ]}
           />
-          <Button
-            type="primary"
-            icon={<PlayCircleOutlined />}
-            onClick={handleScan}
-            disabled={isRunning}
-          >
+          <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleScan} disabled={isRunning}>
             Scan
           </Button>
-          <Button
-            danger
-            icon={<StopOutlined />}
-            onClick={handleStop}
-            disabled={!isRunning}
-          >
+          <Button danger icon={<StopOutlined />} onClick={handleStop} disabled={!isRunning}>
             Stop
           </Button>
           <Button icon={<ReloadOutlined />} onClick={reset} disabled={isRunning}>
             Clear
           </Button>
-          <Button icon={<ExportOutlined />} disabled={devices.length === 0}>
+          <Button icon={<ExportOutlined />} onClick={handleExportDrawIO} disabled={devices.length === 0}>
             Export Draw.io
           </Button>
         </Space>
-
         {isRunning && (
           <div className="mt-2">
             <Progress percent={scanProgress} size="small" status="active" />
-            <Typography.Text type="secondary" className="text-xs ml-2">
+            <Text type="secondary" className="text-xs ml-2">
               Scanning... {devices.length} device(s) found
-            </Typography.Text>
+            </Text>
           </div>
         )}
       </Card>
@@ -134,21 +167,14 @@ const TopologyPage: React.FC = () => {
       <Card className="flex-1 overflow-hidden" bodyStyle={{ height: '100%', padding: 0 }}>
         {devices.length === 0 && !isRunning ? (
           <div className="flex items-center justify-center h-full" style={{ background: isDark ? '#0d1117' : '#f5f5f5' }}>
-            <Empty
-              description={
-                <span className={isDark ? 'text-gray-400' : 'text-gray-500'}>
-                  Enter a subnet and click Scan to discover devices
-                </span>
-              }
-            />
+            <Empty description={
+              <span className={isDark ? 'text-gray-400' : 'text-gray-500'}>
+                Enter a subnet and click Scan to discover devices
+              </span>
+            } />
           </div>
         ) : (
-          <TopologyMap
-            nodes={graphNodes}
-            edges={placeholderEdges}
-            onNodeClick={handleNodeClick}
-            darkMode={isDark}
-          />
+          <TopologyMap nodes={graphNodes} edges={placeholderEdges} onNodeClick={handleNodeClick} darkMode={isDark} />
         )}
       </Card>
 
@@ -161,38 +187,16 @@ const TopologyPage: React.FC = () => {
       >
         {selectedDevice && (
           <Descriptions column={1} size="small" bordered>
-            {selectedDevice.hostname && (
-              <Descriptions.Item label="Hostname">{selectedDevice.hostname}</Descriptions.Item>
-            )}
-            <Descriptions.Item label="IP Addresses">
-              {selectedDevice.ips.length > 0 ? selectedDevice.ips.join(', ') : 'N/A'}
-            </Descriptions.Item>
-            <Descriptions.Item label="MAC Address">
-              <Tag>{selectedDevice.mac || 'Unknown'}</Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="Vendor">
-              {selectedDevice.vendor || 'Unknown'}
-            </Descriptions.Item>
-            <Descriptions.Item label="Model">
-              {selectedDevice.model || 'Unknown'}
-            </Descriptions.Item>
-            <Descriptions.Item label="OS">
-              {selectedDevice.os || 'Unknown'}
-            </Descriptions.Item>
-            <Descriptions.Item label="Role">
-              <Tag color={roleToColor(selectedDevice.role)}>{selectedDevice.role}</Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="VLANs">
-              {selectedDevice.vlans.length > 0
-                ? selectedDevice.vlans.map(v => <Tag key={v}>{v}</Tag>)
-                : 'None'}
-            </Descriptions.Item>
-            <Descriptions.Item label="First Seen">
-              {selectedDevice.firstSeen ? new Date(selectedDevice.firstSeen).toLocaleString() : 'N/A'}
-            </Descriptions.Item>
-            <Descriptions.Item label="Last Seen">
-              {selectedDevice.lastSeen ? new Date(selectedDevice.lastSeen).toLocaleString() : 'N/A'}
-            </Descriptions.Item>
+            {selectedDevice.hostname && <Descriptions.Item label="Hostname">{selectedDevice.hostname}</Descriptions.Item>}
+            <Descriptions.Item label="IP Addresses">{selectedDevice.ips.length > 0 ? selectedDevice.ips.join(', ') : 'N/A'}</Descriptions.Item>
+            <Descriptions.Item label="MAC Address"><Tag>{selectedDevice.mac || 'Unknown'}</Tag></Descriptions.Item>
+            <Descriptions.Item label="Vendor">{selectedDevice.vendor || 'Unknown'}</Descriptions.Item>
+            <Descriptions.Item label="Model">{selectedDevice.model || 'Unknown'}</Descriptions.Item>
+            <Descriptions.Item label="OS">{selectedDevice.os || 'Unknown'}</Descriptions.Item>
+            <Descriptions.Item label="Role"><Tag color={roleToColor(selectedDevice.role)}>{selectedDevice.role}</Tag></Descriptions.Item>
+            <Descriptions.Item label="VLANs">{selectedDevice.vlans.length > 0 ? selectedDevice.vlans.map(v => <Tag key={v}>{v}</Tag>) : 'None'}</Descriptions.Item>
+            <Descriptions.Item label="First Seen">{selectedDevice.firstSeen ? new Date(selectedDevice.firstSeen).toLocaleString() : 'N/A'}</Descriptions.Item>
+            <Descriptions.Item label="Last Seen">{selectedDevice.lastSeen ? new Date(selectedDevice.lastSeen).toLocaleString() : 'N/A'}</Descriptions.Item>
           </Descriptions>
         )}
       </Drawer>

@@ -1,19 +1,25 @@
+// Stub Wails runtime. Replaced by wailsjs/runtime during `wails generate module`.
+
 export function EventsOn(eventName: string, callback: (...args: any[]) => void): void {
-  console.log(`[Wails Runtime] EventsOn: ${eventName}`);
+  console.log(`[Wails] EventsOn: ${eventName}`);
+  // Store callback for possible emission during dev
+  const handler = (e: CustomEvent) => callback(...(e.detail || []));
+  window.addEventListener(`wails:${eventName}`, handler as EventListener);
 }
 
 export function EventsOff(eventName: string): void {
-  console.log(`[Wails Runtime] EventsOff: ${eventName}`);
+  console.log(`[Wails] EventsOff: ${eventName}`);
 }
 
 export function EventsOnce(eventName: string, callback: (...args: any[]) => void): void {
-  console.log(`[Wails Runtime] EventsOnce: ${eventName}`);
+  console.log(`[Wails] EventsOnce: ${eventName}`);
 }
 
 export function EventsEmit(eventName: string, ...args: any[]): void {
-  console.log(`[Wails Runtime] EventsEmit: ${eventName}`, args);
+  console.log(`[Wails] EventsEmit: ${eventName}`, args);
+  window.dispatchEvent(new CustomEvent(`wails:${eventName}`, { detail: args }));
 }
 
 export function LogPrint(message: string): void {
-  console.log(`[Wails Runtime] Log: ${message}`);
+  console.log(`[Wails] Log: ${message}`);
 }
