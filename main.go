@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"log"
 	"os"
@@ -35,7 +36,7 @@ func main() {
 			Assets: assets,
 		},
 		OnStartup:  bridge.SetContext,
-		OnShutdown: func(ctx interface{}) { store.Close() },
+		OnShutdown: func(ctx context.Context) { store.Close() },
 		Bind: []interface{}{
 			bridge,
 		},
