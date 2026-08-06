@@ -3,6 +3,7 @@ name: Build Windows
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -29,7 +30,7 @@ jobs:
         shell: powershell
 
       - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.9.1
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -46,10 +47,13 @@ jobs:
           restore-keys: ${{ runner.os }}-npm-
 
       - name: Download Go dependencies
-        run: go mod tidy
+        run: go mod download
+
+      - name: Verify Go dependencies
+        run: go mod verify
 
       - name: Install frontend dependencies
-        run: cd frontend && npm install
+        run: cd frontend && npm ci
 
       - name: Generate Wails bindings
         run: |
