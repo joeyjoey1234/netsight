@@ -56,12 +56,14 @@ func startDNS(ctx context.Context, config *model.ServerConfig, onStatus func(*mo
 			continue
 		}
 
+		query := append([]byte(nil), buf[:n]...)
+		peer := *remoteAddr
 		go func() {
-			response, err := forwardDNSQuery(buf[:n], forwarder)
+			response, err := forwardDNSQuery(query, forwarder)
 			if err != nil {
 				return
 			}
-			conn.WriteToUDP(response, remoteAddr)
+			_, _ = conn.WriteToUDP(response, &peer)
 		}()
 	}
 }

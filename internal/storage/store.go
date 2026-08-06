@@ -9,12 +9,14 @@ type Store interface {
 	DeleteProject(id string) error
 
 	SaveScan(projectID string, scan *model.Scan) error
+	UpdateScan(scan *model.Scan) error
 	GetScan(id string) (*model.Scan, error)
 	ListScans(projectID string) ([]*model.Scan, error)
 	GetLatestScan(projectID string) (*model.Scan, error)
 
 	SaveDevice(projectID string, device *model.Device) error
 	SaveDevices(projectID string, devices []*model.Device) error
+	SaveScanDevice(scanID, deviceID string) error
 	GetDevice(id string) (*model.Device, error)
 	ListDevices(projectID string) ([]*model.Device, error)
 	GetDevicesByScan(scanID string) ([]*model.Device, error)

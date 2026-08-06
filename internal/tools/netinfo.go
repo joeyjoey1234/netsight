@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"netsight/internal/model"
-	"os"
 	"strings"
 )
 
@@ -47,10 +46,6 @@ func GetNetworkInfo() (*model.InterfaceInfo, error) {
 			break
 		}
 	}
-
-	info.Gateway = detectGateway()
-	info.DNS = detectDNS()
-	info.PublicIP = detectPublicIP()
 
 	return info, nil
 }
@@ -117,39 +112,7 @@ func GetAvailableSubnets() ([]string, error) {
 		}
 	}
 
-	if len(subnets) == 0 {
-		subnets = append(subnets, "192.168.1.0/24")
-	}
-
 	return subnets, nil
-}
-
-func detectGateway() string {
-	conn, err := net.Dial("udp", "8.8.8.8:53")
-	if err != nil {
-		return ""
-	}
-	defer conn.Close()
-
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	if localAddr != nil {
-		ip := localAddr.IP.To4()
-		if ip != nil {
-			ip[3] = 1
-			return ip.String()
-		}
-	}
-	return ""
-}
-
-func detectDNS() []string {
-	host, _ := os.Hostname()
-	_ = host
-	return []string{"8.8.8.8", "1.1.1.1"}
-}
-
-func detectPublicIP() string {
-	return "detecting..."
 }
 
 // GetInterfaceDisplayName returns a human-readable name for an interface

@@ -3,7 +3,6 @@ package wailsbridge
 import (
 	"context"
 	"fmt"
-	"net"
 	"netsight/internal/capture"
 	"netsight/internal/export"
 	"netsight/internal/model"
@@ -11,6 +10,8 @@ import (
 	"netsight/internal/server"
 	"netsight/internal/storage"
 	"netsight/internal/tools"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -18,19 +19,21 @@ import (
 )
 
 type Bridge struct {
-	ctx           context.Context
-	store         storage.Store
-	scanner       *scan.ScanOrchestrator
-	captureEngine *capture.Engine
-	serverManager *server.Manager
-	netInfo       []*model.InterfaceInfo
-	mu            sync.Mutex
-	pingCancel    context.CancelFunc
-	traceCancel   context.CancelFunc
+	ctx             context.Context
+	store           storage.Store
+	scanner         *scan.ScanOrchestrator
+	captureEngine   *capture.Engine
+	serverManager   *server.Manager
+	netInfo         []*model.InterfaceInfo
+	activeProjectID string
+	mu              sync.Mutex
+	pingCancel      context.CancelFunc
+	traceCancel     context.CancelFunc
+	scanStates      map[string]*model.Scan
 }
 
 func NewBridge(store storage.Store) *Bridge {
-	b := &Bridge{store: store}
+	b := &Bridge{store: store, scanStates: make(map[string]*model.Scan)}
 	b.serverManager = server.NewManager(func(state *model.ServerState) {
 		b.EmitServerStatus(state)
 	})
@@ -75,20 +78,59 @@ func (b *Bridge) GetAvailableSubnets() ([]string, error) {
 
 // === Scan ===
 type ScanInput struct {
-	Subnet string `json:"subnet"`
-	Preset string `json:"preset"`
+	Subnet    string `json:"subnet"`
+	Preset    string `json:"preset"`
+	ProjectID string `json:"projectId"`
 }
 
 func (b *Bridge) StartScan(input ScanInput) (string, error) {
+	projectID, err := b.ensureProject(input.ProjectID)
+	if err != nil {
+		return "", err
+	}
+	b.mu.Lock()
+	b.activeProjectID = projectID
+	b.mu.Unlock()
 	b.scanner = scan.NewScanOrchestrator()
 	b.scanner.OnProgress = func(scanID string, progress int) {
 		runtime.EventsEmit(b.ctx, "scan:progress", scanID, progress)
 	}
-	b.scanner.OnDeviceFound = func(device *model.Device) {
+	b.scanner.OnDeviceFound = func(scanID string, device *model.Device) {
 		runtime.EventsEmit(b.ctx, "scan:device-found", device)
-		b.store.SaveDevice("", device)
+		if err := b.store.SaveDevice(projectID, device); err != nil {
+			runtime.EventsEmit(b.ctx, "scan:error", err.Error())
+			return
+		}
+		if err := b.store.SaveScanDevice(scanID, device.ID); err != nil {
+			runtime.EventsEmit(b.ctx, "scan:error", err.Error())
+		}
 	}
+	b.scanner.OnStarted = func(sc *model.Scan) {
+		b.mu.Lock()
+		b.scanStates[sc.ID] = sc
+		b.mu.Unlock()
+		if err := b.store.SaveScan(projectID, sc); err != nil {
+			runtime.EventsEmit(b.ctx, "scan:error", sc.ID, err.Error())
+		}
+	}
+	b.scanner.OnPortsFound = func(scanID, deviceID string, ports []*model.Port) {
+		if err := b.store.SavePorts(deviceID, scanID, ports); err != nil {
+			runtime.EventsEmit(b.ctx, "scan:error", err.Error())
+		}
+	}
+	b.scanner.OnError = func(scanID string, scanErr error) { runtime.EventsEmit(b.ctx, "scan:error", scanID, scanErr.Error()) }
 	b.scanner.OnComplete = func(scanID string, status string) {
+		b.mu.Lock()
+		if sc := b.scanStates[scanID]; sc != nil {
+			sc.Status = status
+			sc.Duration = time.Since(sc.Timestamp)
+			sc.DevicesFound = len(mustDevices(b.store, scanID))
+			if err := b.store.UpdateScan(sc); err != nil {
+				runtime.EventsEmit(b.ctx, "scan:error", scanID, err.Error())
+			}
+			delete(b.scanStates, scanID)
+		}
+		b.mu.Unlock()
 		runtime.EventsEmit(b.ctx, "scan:complete", scanID, status)
 	}
 	return b.scanner.StartScan(input.Subnet, input.Preset)
@@ -102,11 +144,17 @@ func (b *Bridge) StopScan(scanID string) error {
 }
 
 func (b *Bridge) GetDevices() ([]*model.Device, error) {
-	return b.store.ListDevices("")
+	b.mu.Lock()
+	projectID := b.activeProjectID
+	b.mu.Unlock()
+	return b.store.ListDevices(projectID)
 }
 
 func (b *Bridge) GetScanHistory() ([]*model.Scan, error) {
-	return b.store.ListScans("")
+	b.mu.Lock()
+	projectID := b.activeProjectID
+	b.mu.Unlock()
+	return b.store.ListScans(projectID)
 }
 
 // === Packet Capture ===
@@ -152,10 +200,12 @@ func (b *Bridge) RunPing(input PingInput) (*model.PingResult, error) {
 		input.Count = 4
 	}
 
+	var last *model.PingResult
 	err := tools.Ping(ctx, input.Target, input.Count, 56, 64, func(result *model.PingResult) {
+		last = result
 		runtime.EventsEmit(b.ctx, "tool:ping-result", result)
 	})
-	return nil, err
+	return last, err
 }
 
 type TracerouteInput struct {
@@ -203,7 +253,11 @@ func (b *Bridge) RunIPerf(input IPerfInput) (*model.IPerfResult, error) {
 	}
 	// On Windows, iperf3.exe is embedded at the same level as the app binary.
 	// Also try the embedded/ directory relative to the working directory.
-	iperfPath := "embedded/iperf3.exe"
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	iperfPath := filepath.Join(filepath.Dir(exe), "embedded", "iperf3.exe")
 	return nil, tools.RunIPerf(context.Background(), input.Target, input.ServerMode, input.Duration, iperfPath, func(result *model.IPerfResult) {
 		runtime.EventsEmit(b.ctx, "iperf:result", result)
 	})
@@ -222,7 +276,11 @@ func (b *Bridge) StartServer(serverType string, config map[string]interface{}) e
 		cfg.RootDir = toString(v)
 	}
 	if v, ok := config["readOnly"]; ok {
-		cfg.ReadOnly = v.(bool)
+		if value, ok := v.(bool); ok {
+			cfg.ReadOnly = value
+		} else {
+			return fmt.Errorf("readOnly must be a boolean")
+		}
 	}
 	if v, ok := config["poolStart"]; ok {
 		cfg.PoolStart = toString(v)
@@ -242,21 +300,47 @@ func (b *Bridge) StartServer(serverType string, config map[string]interface{}) e
 		return err
 	}
 
-	time.AfterFunc(1*time.Second, func() {
-		addr := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
-		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
-		if err != nil {
-			runtime.EventsEmit(b.ctx, "server:status", &model.ServerState{
-				Type:   serverType,
-				Port:   cfg.Port,
-				Status: "error",
-				Error:  fmt.Sprintf("Self-test failed: %v", err),
-			})
-			return
-		}
-		conn.Close()
-	})
 	return nil
+}
+
+func (b *Bridge) Shutdown() {
+	if b.captureEngine != nil {
+		b.captureEngine.Stop()
+	}
+	if b.scanner != nil {
+		_ = b.scanner.StopScan("")
+	}
+	b.serverManager.Shutdown()
+	b.mu.Lock()
+	if b.pingCancel != nil {
+		b.pingCancel()
+	}
+	if b.traceCancel != nil {
+		b.traceCancel()
+	}
+	b.mu.Unlock()
+}
+
+func (b *Bridge) ensureProject(id string) (string, error) {
+	if id != "" {
+		if _, err := b.store.GetProject(id); err != nil {
+			return "", err
+		}
+		return id, nil
+	}
+	projects, err := b.store.ListProjects()
+	if err != nil {
+		return "", err
+	}
+	if len(projects) > 0 {
+		return projects[0].ID, nil
+	}
+	p := &model.Project{ID: "default", Name: "Default", Created: time.Now()}
+	return p.ID, b.store.CreateProject(p)
+}
+func mustDevices(store storage.Store, scanID string) []*model.Device {
+	devices, _ := store.GetDevicesByScan(scanID)
+	return devices
 }
 
 func (b *Bridge) StopServer(serverType string) error {
@@ -265,14 +349,30 @@ func (b *Bridge) StopServer(serverType string) error {
 
 // === Export ===
 func (b *Bridge) ExportPDF(scanID string) (string, error) {
-	devices, _ := b.store.ListDevices("")
-	var findings []*model.Finding
+	devices, err := b.store.GetDevicesByScan(scanID)
+	if err != nil {
+		return "", err
+	}
+	sc, err := b.store.GetScan(scanID)
+	if err != nil {
+		return "", err
+	}
+	findings := make([]*model.Finding, 0, len(sc.Findings))
+	for i := range sc.Findings {
+		findings = append(findings, &sc.Findings[i])
+	}
 	return export.GeneratePDF(scanID, "", devices, findings, "")
 }
 
 func (b *Bridge) ExportDrawIO(scanID string) (string, error) {
-	devices, _ := b.store.ListDevices("")
-	links, _ := b.store.ListLinks()
+	devices, err := b.store.GetDevicesByScan(scanID)
+	if err != nil {
+		return "", err
+	}
+	links, err := b.store.ListLinks()
+	if err != nil {
+		return "", err
+	}
 	return export.ExportDrawIO(devices, links)
 }
 
@@ -287,11 +387,32 @@ func (b *Bridge) CreateProject(name string) (*model.Project, error) {
 	if err != nil {
 		return nil, err
 	}
+	b.mu.Lock()
+	b.activeProjectID = project.ID
+	b.mu.Unlock()
 	return project, nil
 }
 
 func (b *Bridge) LoadProject(id string) (*model.Project, error) {
-	return b.store.GetProject(id)
+	project, err := b.store.GetProject(id)
+	if err != nil {
+		return nil, err
+	}
+	b.mu.Lock()
+	b.activeProjectID = id
+	b.mu.Unlock()
+	project.Devices, err = b.store.ListDevices(id)
+	if err != nil {
+		return nil, err
+	}
+	project.Scans, err = b.store.ListScans(id)
+	if err != nil {
+		return nil, err
+	}
+	for _, scan := range project.Scans {
+		project.Findings = append(project.Findings, scan.Findings...)
+	}
+	return project, nil
 }
 
 func (b *Bridge) ListProjects() ([]*model.Project, error) {

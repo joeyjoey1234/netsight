@@ -31,7 +31,7 @@ func GeneratePDF(scanID string, subnet string, devices []*model.Device, findings
 		TopologyImage: topologyImage,
 	}
 
-	content := buildReportContent(scanID, subnet, devices, findings)
+	content := buildPDF(scanID, subnet, devices, findings)
 	if err := os.WriteFile(outputPath, content, 0644); err != nil {
 		return "", fmt.Errorf("failed to write PDF report: %w", err)
 	}
@@ -41,8 +41,35 @@ func GeneratePDF(scanID string, subnet string, devices []*model.Device, findings
 }
 
 func GeneratePDFContent(scanID string, subnet string, devices []*model.Device, findings []*model.Finding) ([]byte, error) {
-	content := buildReportContent(scanID, subnet, devices, findings)
+	content := buildPDF(scanID, subnet, devices, findings)
 	return content, nil
+}
+
+func buildPDF(scanID, subnet string, devices []*model.Device, findings []*model.Finding) []byte {
+	text := buildReportContent(scanID, subnet, devices, findings)
+	lines := strings.Split(string(text), "\n")
+	stream := "BT\n/F1 9 Tf\n40 770 Td\n"
+	for _, line := range lines {
+		line = strings.ReplaceAll(strings.ReplaceAll(line, `\`, `\\`), "(", `\(`)
+		line = strings.ReplaceAll(line, ")", `\)`)
+		stream += "(" + line + ") Tj 0 -12 Td\n"
+	}
+	stream += "ET\n"
+	objects := []string{"<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>", fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(stream), stream)}
+	var out strings.Builder
+	out.WriteString("%PDF-1.4\n")
+	offsets := []int{0}
+	for i, obj := range objects {
+		offsets = append(offsets, out.Len())
+		fmt.Fprintf(&out, "%d 0 obj\n%s\nendobj\n", i+1, obj)
+	}
+	xref := out.Len()
+	fmt.Fprintf(&out, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, offset := range offsets[1:] {
+		fmt.Fprintf(&out, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&out, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	return []byte(out.String())
 }
 
 func buildReportContent(scanID string, subnet string, devices []*model.Device, findings []*model.Finding) []byte {

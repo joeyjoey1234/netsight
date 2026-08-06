@@ -7,6 +7,9 @@ type Project struct {
 	Name     string          `json:"name"`
 	Created  time.Time       `json:"created"`
 	Settings ProjectSettings `json:"settings"`
+	Devices  []*Device       `json:"devices,omitempty"`
+	Scans    []*Scan         `json:"scans,omitempty"`
+	Findings []Finding       `json:"findings,omitempty"`
 }
 
 type ProjectSettings struct {

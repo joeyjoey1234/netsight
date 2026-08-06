@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, Input, Space, Table, Tag, Statistic, Row, Col, Select, Empty, message } from 'antd';
+import { Card, Button, Input, Space, Table, Tag, Statistic, Row, Col, Select, Empty, message, Alert } from 'antd';
 import { PlayCircleOutlined, PauseCircleOutlined, DownloadOutlined } from '@ant-design/icons';
 import { useCaptureStore } from '../stores/captureStore';
 import { startPacketCapture, stopPacketCapture, onEvent, getAllNetworkInfo } from '../hooks/api';
@@ -14,9 +14,10 @@ const CapturePage: React.FC = () => {
   const { isCapturing, packets, packetsPerSec, bytesPerSec, filter, setFilter, setCapturing, addPacket, setStats, clear } = useCaptureStore();
   const [iface, setIface] = useState('');
   const [interfaces, setInterfaces] = useState<InterfaceOption[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getAllNetworkInfo().then((infos: any[]) => {
+    getAllNetworkInfo().then((infos: any[] | null) => {
       const opts: InterfaceOption[] = (infos || []).map((info: any) => {
         const firstIpv4 = (info.ips || []).find((ip: string) => !ip.includes(':'));
         return {
@@ -28,7 +29,7 @@ const CapturePage: React.FC = () => {
       if (opts.length > 0 && !iface) {
         setIface(opts[0].value);
       }
-    });
+    }).catch((err: any) => setError(`Unable to load interfaces: ${err?.message || err}`));
   }, []);
 
   useEffect(() => {
@@ -44,12 +45,15 @@ const CapturePage: React.FC = () => {
   }, [addPacket, setStats]);
 
   const handleStart = async () => {
+    if (!iface) { setError('Select a network interface before starting capture.'); return; }
+    clear();
+    setError(null);
     try {
       await startPacketCapture(iface, filter);
       setCapturing(true);
-      clear();
     } catch (err: any) {
-      message.error(`Capture start failed: ${err?.message || err}`);
+      setCapturing(false);
+      setError(`Capture start failed: ${err?.message || err}`);
     }
   };
 
@@ -58,7 +62,7 @@ const CapturePage: React.FC = () => {
       await stopPacketCapture();
       setCapturing(false);
     } catch (err: any) {
-      message.error(`Capture stop failed: ${err?.message || err}`);
+      setError(`Capture stop failed: ${err?.message || err}`);
     }
   };
 
@@ -75,6 +79,7 @@ const CapturePage: React.FC = () => {
   return (
     <div className="h-full flex flex-col p-2">
       <Card size="small" className="mb-2 flex-shrink-0">
+        {error && <Alert className="mb-2" type="error" showIcon message={error} />}
         <Space>
           <Select
             placeholder="Interface"

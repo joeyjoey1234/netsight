@@ -7,6 +7,7 @@ import (
 	"net"
 	"netsight/internal/model"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -35,8 +36,6 @@ func startFTP(ctx context.Context, config *model.ServerConfig, onStatus func(*mo
 		rootDir = "."
 	}
 
-	readOnly := config.ReadOnly
-
 	go func() {
 		for {
 			select {
@@ -50,7 +49,7 @@ func startFTP(ctx context.Context, config *model.ServerConfig, onStatus func(*mo
 			if err != nil {
 				continue
 			}
-			go handleFTPConnection(ctx, conn, rootDir, readOnly)
+			go handleFTPConnection(ctx, conn, rootDir, true)
 		}
 	}()
 
@@ -90,21 +89,23 @@ func handleFTPConnection(ctx context.Context, conn net.Conn, rootDir string, rea
 
 		switch cmd {
 		case "USER":
-			// Accept any user for now (anonymous FTP-like)
-			sendFTP(writer, "331 User name okay, need password\r\n")
-			authenticated = true
+			sendFTP(writer, "530 FTP authentication is not configured\r\n")
 
 		case "PASS":
-			if authenticated {
-				sendFTP(writer, "230 User logged in\r\n")
-			} else {
-				sendFTP(writer, "530 Not logged in\r\n")
-			}
+			sendFTP(writer, "530 FTP authentication is not configured\r\n")
 
 		case "PWD":
+			if !authenticated {
+				sendFTP(writer, "530 Not logged in\r\n")
+				break
+			}
 			sendFTP(writer, fmt.Sprintf("257 \"%s\" is the current directory\r\n", currentDir))
 
 		case "CWD":
+			if !authenticated {
+				sendFTP(writer, "530 Not logged in\r\n")
+				break
+			}
 			if len(parts) > 1 {
 				newDir := strings.Trim(parts[1], "\"")
 				sendFTP(writer, fmt.Sprintf("250 Changed to %s\r\n", newDir))
@@ -121,6 +122,10 @@ func handleFTPConnection(ctx context.Context, conn net.Conn, rootDir string, rea
 			sendFTP(writer, "227 Entering Passive Mode (127,0,0,1,0,0)\r\n")
 
 		case "LIST", "NLST":
+			if !authenticated {
+				sendFTP(writer, "530 Not logged in\r\n")
+				break
+			}
 			sendFTP(writer, "150 Opening ASCII mode data connection\r\n")
 			// Send directory listing inline
 			entries, _ := os.ReadDir(rootDir)
@@ -137,19 +142,27 @@ func handleFTPConnection(ctx context.Context, conn net.Conn, rootDir string, rea
 			sendFTP(writer, "226 Transfer complete\r\n")
 
 		case "RETR":
-			if readOnly {
-				sendFTP(writer, "550 Permission denied (read-only mode)\r\n")
+			if !authenticated {
+				sendFTP(writer, "530 Not logged in\r\n")
 			} else if len(parts) > 1 {
 				filename := strings.TrimSpace(parts[1])
-				sendFTP(writer, fmt.Sprintf("150 Opening data connection for %s\r\n", filename))
-				_ = filename // TODO: send file contents
-				sendFTP(writer, "226 Transfer complete\r\n")
+				path, ok := safeFTPPath(rootDir, filename)
+				if !ok {
+					sendFTP(writer, "550 Invalid path\r\n")
+					break
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					sendFTP(writer, "550 File unavailable\r\n")
+					break
+				}
+				sendFTP(writer, fmt.Sprintf("425 Data channel is not configured; %d bytes were not transferred\r\n", len(data)))
 			} else {
 				sendFTP(writer, "501 Syntax error\r\n")
 			}
 
 		case "STOR":
-			sendFTP(writer, "550 Permission denied (read-only server)\r\n")
+			sendFTP(writer, "550 Uploads are disabled; no file was written\r\n")
 
 		case "QUIT":
 			sendFTP(writer, "221 Goodbye\r\n")
@@ -165,4 +178,20 @@ func handleFTPConnection(ctx context.Context, conn net.Conn, rootDir string, rea
 
 func sendFTP(w *bufio.Writer, msg string) {
 	w.WriteString(msg)
+}
+
+func safeFTPPath(rootDir, name string) (string, bool) {
+	if name == "" {
+		return "", false
+	}
+	root, err := filepath.Abs(rootDir)
+	if err != nil {
+		return "", false
+	}
+	path, err := filepath.Abs(filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(name, "/"))))
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, path)
+	return path, err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }

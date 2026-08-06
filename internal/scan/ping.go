@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -14,6 +15,9 @@ func PingSweep(ctx context.Context, subnet string) ([]string, error) {
 	}
 
 	var ips []string
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 64)
 	for ip := ipNet.IP.Mask(ipNet.Mask); ipNet.Contains(ip); incrementIP(ip) {
 		if isNetworkOrBroadcast(ip, ipNet) {
 			continue
@@ -23,23 +27,32 @@ func PingSweep(ctx context.Context, subnet string) ([]string, error) {
 			return ips, ctx.Err()
 		default:
 			ipStr := ip.String()
-			if pingHost(ipStr) {
-				ips = append(ips, ipStr)
-			}
+			wg.Add(1)
+			go func(target string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				if pingHost(target) || tcpProbeHost(target) {
+					mu.Lock()
+					ips = append(ips, target)
+					mu.Unlock()
+				}
+			}(ipStr)
 		}
 	}
+	wg.Wait()
 	return ips, nil
 }
 
 func pingHost(ip string) bool {
-	conn, err := net.DialTimeout("ip4:icmp", ip, 2*time.Second)
+	conn, err := net.DialTimeout("ip4:icmp", ip, 500*time.Millisecond)
 	if err != nil {
 		return false
 	}
 	defer conn.Close()
 
 	msg := buildICMPEchoRequest()
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
 	_, err = conn.Write(msg)
 	if err != nil {
 		return false
@@ -48,6 +61,17 @@ func pingHost(ip string) bool {
 	reply := make([]byte, 1500)
 	_, err = conn.Read(reply)
 	return err == nil
+}
+
+func tcpProbeHost(ip string) bool {
+	for _, port := range []int{80, 443, 22, 445, 3389, 8080} {
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(ip, fmt.Sprint(port)), 250*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return true
+		}
+	}
+	return false
 }
 
 func buildICMPEchoRequest() []byte {

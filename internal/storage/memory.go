@@ -75,6 +75,16 @@ func (s *MemoryStore) SaveScan(projectID string, scan *model.Scan) error {
 	return nil
 }
 
+func (s *MemoryStore) UpdateScan(scan *model.Scan) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.scans[scan.ID]; !ok {
+		return fmt.Errorf("scan not found: %s", scan.ID)
+	}
+	s.scans[scan.ID] = scan
+	return nil
+}
+
 func (s *MemoryStore) GetScan(id string) (*model.Scan, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -119,6 +129,18 @@ func (s *MemoryStore) SaveDevice(projectID string, device *model.Device) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.devices[device.ID] = device
+	return nil
+}
+
+func (s *MemoryStore) SaveScanDevice(scanID, deviceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range s.scanDevices[scanID] {
+		if id == deviceID {
+			return nil
+		}
+	}
+	s.scanDevices[scanID] = append(s.scanDevices[scanID], deviceID)
 	return nil
 }
 

@@ -11,6 +11,7 @@ export interface Device {
   lastSeen: string;
   notes: string;
   model: string;
+  links?: Link[];
 }
 
 export interface Port {
@@ -26,7 +27,7 @@ export interface Port {
 export interface Link {
   sourceId: string;
   targetId: string;
-  type: 'CDP' | 'LLDP' | 'ARP' | 'STP';
+  type: 'CDP' | 'LLDP' | 'ARP' | 'STP' | string;
   srcPort: string;
   dstPort: string;
   vlan: number;
@@ -59,6 +60,10 @@ export interface Project {
   name: string;
   created: string;
   settings: ProjectSettings;
+  devices?: Device[];
+  scans?: Scan[];
+  findings?: Finding[];
+  links?: Link[];
 }
 
 export interface ProjectSettings {

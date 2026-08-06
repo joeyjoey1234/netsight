@@ -2,6 +2,8 @@ package scan
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"netsight/internal/model"
 	"time"
 )
@@ -17,8 +19,11 @@ type ScanResult struct {
 
 type ScanOrchestrator struct {
 	OnProgress    func(scanID string, progress int)
-	OnDeviceFound func(device *model.Device)
+	OnDeviceFound func(scanID string, device *model.Device)
+	OnPortsFound  func(scanID, deviceID string, ports []*model.Port)
+	OnStarted     func(*model.Scan)
 	OnComplete    func(scanID string, status string)
+	OnError       func(scanID string, err error)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -29,9 +34,18 @@ func NewScanOrchestrator() *ScanOrchestrator {
 }
 
 func (o *ScanOrchestrator) StartScan(subnet, preset string) (string, error) {
+	if _, _, err := net.ParseCIDR(subnet); err != nil {
+		return "", fmt.Errorf("invalid subnet: %w", err)
+	}
+	if _, err := presetConfig(preset); err != nil {
+		return "", err
+	}
 	scanID := generateID()
 	o.ctx, o.cancel = context.WithCancel(context.Background())
 
+	if o.OnStarted != nil {
+		o.OnStarted(&model.Scan{ID: scanID, Timestamp: time.Now(), Subnet: subnet, Preset: preset, Status: "running"})
+	}
 	go o.runScan(o.ctx, scanID, subnet, preset)
 	return scanID, nil
 }
@@ -46,13 +60,15 @@ func (o *ScanOrchestrator) StopScan(scanID string) error {
 func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset string) {
 	start := time.Now()
 	ports := DefaultPorts()
-	_ = preset
 
 	if o.OnProgress != nil {
 		o.OnProgress(scanID, 10)
 	}
 	liveHosts, err := PingSweep(ctx, subnet)
 	if err != nil {
+		if o.OnError != nil {
+			o.OnError(scanID, err)
+		}
 		if o.OnComplete != nil {
 			o.OnComplete(scanID, "failed")
 		}
@@ -63,8 +79,12 @@ func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset s
 		o.OnProgress(scanID, 30)
 	}
 	arpTable, err := ARPScan(ctx, subnet)
-	_ = arpTable
-	_ = err
+	if err != nil {
+		if o.OnError != nil {
+			o.OnError(scanID, err)
+		}
+		arpTable = make(map[string]string)
+	}
 
 	if o.OnProgress != nil {
 		o.OnProgress(scanID, 50)
@@ -73,6 +93,9 @@ func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset s
 	for i, ip := range liveHosts {
 		select {
 		case <-ctx.Done():
+			if o.OnComplete != nil {
+				o.OnComplete(scanID, "cancelled")
+			}
 			return
 		default:
 		}
@@ -90,7 +113,16 @@ func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset s
 			device.Vendor = LookupOUI(mac)
 		}
 
-		scanPorts, _ := TCPSynScan(ctx, ip, ports)
+		scanPorts, err := TCPSynScan(ctx, ip, ports)
+		if err != nil {
+			if o.OnError != nil {
+				o.OnError(scanID, err)
+			}
+			if o.OnComplete != nil {
+				o.OnComplete(scanID, "failed")
+			}
+			return
+		}
 		for _, p := range scanPorts {
 			if p.State == "open" && isBannerable(p.Number) {
 				banner := GrabBanner(ctx, ip, p.Number)
@@ -107,7 +139,10 @@ func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset s
 		}
 
 		if o.OnDeviceFound != nil {
-			o.OnDeviceFound(device)
+			o.OnDeviceFound(scanID, device)
+		}
+		if o.OnPortsFound != nil {
+			o.OnPortsFound(scanID, device.ID, scanPorts)
 		}
 
 		progress := 50 + int(float64(i+1)/float64(totalHosts)*40)
@@ -121,5 +156,14 @@ func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset s
 	}
 	if o.OnComplete != nil {
 		o.OnComplete(scanID, "completed")
+	}
+}
+
+func presetConfig(name string) (string, error) {
+	switch name {
+	case "quick", "short", "long", "manual":
+		return name, nil
+	default:
+		return "", fmt.Errorf("unknown preset: %s", name)
 	}
 }

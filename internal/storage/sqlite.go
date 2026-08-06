@@ -182,6 +182,12 @@ func (s *SQLiteStore) SaveScan(projectID string, scan *model.Scan) error {
 	return err
 }
 
+func (s *SQLiteStore) UpdateScan(scan *model.Scan) error {
+	_, err := s.db.Exec(`UPDATE scans SET timestamp = ?, subnet = ?, duration_ms = ?, preset = ?, status = ?, devices_found = ?, findings_json = ? WHERE id = ?`,
+		scan.Timestamp, scan.Subnet, scan.Duration.Milliseconds(), scan.Preset, scan.Status, scan.DevicesFound, marshalJSON(scan.Findings), scan.ID)
+	return err
+}
+
 func (s *SQLiteStore) GetScan(id string) (*model.Scan, error) {
 	row := s.db.QueryRow(
 		"SELECT id, timestamp, subnet, duration_ms, preset, status, devices_found, findings_json FROM scans WHERE id = ?",
@@ -253,6 +259,11 @@ func (s *SQLiteStore) SaveDevice(projectID string, device *model.Device) error {
 		device.Vendor, device.Hostname, device.OS, device.Role, device.Model,
 		marshalJSON(device.VLANs), device.FirstSeen, device.LastSeen, device.Notes,
 	)
+	return err
+}
+
+func (s *SQLiteStore) SaveScanDevice(scanID, deviceID string) error {
+	_, err := s.db.Exec("INSERT OR IGNORE INTO scan_devices (scan_id, device_id) VALUES (?, ?)", scanID, deviceID)
 	return err
 }
 

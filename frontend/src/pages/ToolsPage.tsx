@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Card, Input, Button, Select, Space, Row, Col, Table, Descriptions, Statistic, message, Typography, Tag } from 'antd';
+import React, { useState, useEffect, useRef } from 'react';
+import { Card, Input, Button, Select, Space, Row, Col, Table, Descriptions, Statistic, message, Typography, Tag, Alert } from 'antd';
 import { SendOutlined, NodeIndexOutlined, SearchOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { runPing, runTraceroute, runNSLookup, wakeOnLAN, runIPerf, getNetworkInfo, onEvent } from '../hooks/api';
 import type { PingResult, Hop } from '../types';
@@ -49,11 +49,16 @@ const ToolsPage: React.FC = () => {
   const [subnetHosts, setSubnetHosts] = useState<number | null>(null);
   const [subnetBase, setSubnetBase] = useState('');
   const [subnetResult, setSubnetResult] = useState<any>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const latencyIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const unsubs = [
       onEvent('tool:ping-result', (result: PingResult) => {
         setPingResults(prev => [...prev.slice(-49), result]);
+        if (latencyRunning && result?.target === latencyTarget && !result.timedOut) {
+          setLatencyPoints(prev => [...prev.slice(-59), result.latencyMs]);
+        }
       }),
       onEvent('tool:traceroute-hop', (hop: Hop) => {
         setTraceHops(prev => [...prev, hop]);
@@ -63,18 +68,28 @@ const ToolsPage: React.FC = () => {
       }),
     ];
     return () => unsubs.forEach(fn => fn());
+  }, [latencyRunning, latencyTarget]);
+
+  useEffect(() => () => {
+    if (latencyIntervalRef.current) clearInterval(latencyIntervalRef.current);
   }, []);
 
+  const setActionError = (key: string, err: any, fallback: string) => {
+    setErrors(prev => ({ ...prev, [key]: err?.message || String(err) || fallback }));
+  };
+
   const handlePing = async () => {
-    if (!pingTarget) return;
+    if (!pingTarget.trim()) { setActionError('ping', null, 'Enter a target before starting ping.'); return; }
+    setErrors(prev => ({ ...prev, ping: '' }));
     setPingResults([]);
     try {
       await runPing(pingTarget, pingCount);
-    } catch (err: any) { message.error(err?.message || 'Ping failed'); }
+    } catch (err: any) { setActionError('ping', err, 'Ping failed'); }
   };
 
   const handleTrace = async () => {
-    if (!traceTarget) return;
+    if (!traceTarget.trim()) { setActionError('trace', null, 'Enter a target before starting traceroute.'); return; }
+    setErrors(prev => ({ ...prev, trace: '' }));
     setTraceHops([]);
     try {
       await runTraceroute(traceTarget, traceMode);
@@ -86,42 +101,58 @@ const ToolsPage: React.FC = () => {
     try {
       const results = await runNSLookup(lookupQuery, lookupTypes);
       setLookupResults(results || []);
-    } catch (err: any) { message.error(err?.message || 'Lookup failed'); }
+      setErrors(prev => ({ ...prev, lookup: '' }));
+    } catch (err: any) { setActionError('lookup', err, 'Lookup failed'); }
   };
 
   const handleWoL = async () => {
-    if (!wolMac) return;
+    if (!wolMac.trim()) { setActionError('wol', null, 'Enter a MAC address first.'); return; }
     try {
       await wakeOnLAN(wolMac);
       message.success(`Magic packet sent to ${wolMac}`);
-    } catch (err: any) { message.error(err?.message || 'WoL failed'); }
+    } catch (err: any) { setActionError('wol', err, 'WoL failed'); }
   };
 
   const handleIPerf = async () => {
-    if (!iperfTarget) return;
+    if (iperfMode === 'client' && !iperfTarget.trim()) {
+      setActionError('iperf', null, 'Enter an iPerf server hostname or IP for client mode.');
+      return;
+    }
+    if (!Number.isInteger(iperfDuration) || iperfDuration < 1 || iperfDuration > 3600) {
+      setActionError('iperf', null, 'Duration must be a whole number between 1 and 3600 seconds.');
+      return;
+    }
+    setErrors(prev => ({ ...prev, iperf: '' }));
     try {
       await runIPerf(iperfTarget, iperfMode === 'server', iperfDuration);
-    } catch (err: any) { message.error(err?.message || 'iPerf failed'); }
+    } catch (err: any) { setActionError('iperf', err, 'iPerf failed'); }
   };
 
   const handleNetInfo = async () => {
     try {
       const info = await getNetworkInfo();
       setNetInfo(info);
-    } catch (err: any) { message.error(err?.message || 'Failed'); }
+      setErrors(prev => ({ ...prev, net: '' }));
+    } catch (err: any) { setActionError('net', err, 'Unable to load network information.'); }
   };
 
   const handleLatencyToggle = () => {
-    setLatencyRunning(!latencyRunning);
-    if (!latencyRunning && latencyTarget) {
-      const interval = setInterval(async () => {
+    if (!latencyRunning && !latencyTarget.trim()) {
+      setActionError('latency', null, 'Enter a target before starting latency monitoring.');
+      return;
+    }
+    if (!latencyRunning) {
+      setLatencyPoints([]);
+      setLatencyRunning(true);
+      latencyIntervalRef.current = setInterval(async () => {
         try {
           await runPing(latencyTarget, 1);
-        } catch {}
+        } catch (err: any) { setActionError('latency', err, 'Latency probe failed.'); }
       }, 1000);
-      (window as any).__latencyInterval = interval;
     } else {
-      clearInterval((window as any).__latencyInterval);
+      if (latencyIntervalRef.current) clearInterval(latencyIntervalRef.current);
+      latencyIntervalRef.current = null;
+      setLatencyRunning(false);
     }
   };
 
@@ -146,8 +177,9 @@ const ToolsPage: React.FC = () => {
     <div className="h-full overflow-y-auto p-2">
       <Row gutter={16}>
         <Col span={12}>
-          <Card title="Ping" size="small" className="mb-4">
+           <Card title="Ping" size="small" className="mb-4">
             <Space direction="vertical" style={{ width: '100%' }}>
+              {errors.ping && <Alert type="error" showIcon message={errors.ping} />}
               <Input placeholder="Target IP or hostname" value={pingTarget} onChange={e => setPingTarget(e.target.value)} />
               <Space>
                 <Select value={pingCount} onChange={setPingCount} style={{ width: 100 }} options={[
@@ -165,8 +197,9 @@ const ToolsPage: React.FC = () => {
         </Col>
 
         <Col span={12}>
-          <Card title="Traceroute" size="small" className="mb-4">
+           <Card title="Traceroute" size="small" className="mb-4">
             <Space direction="vertical" style={{ width: '100%' }}>
+              {errors.trace && <Alert type="error" showIcon message={errors.trace} />}
               <Input placeholder="Target IP or hostname" value={traceTarget} onChange={e => setTraceTarget(e.target.value)} />
               <Space>
                 <Select value={traceMode} onChange={setTraceMode} style={{ width: 100 }} options={[
@@ -184,8 +217,9 @@ const ToolsPage: React.FC = () => {
         </Col>
 
         <Col span={12}>
-          <Card title="NSLookup" size="small" className="mb-4">
+           <Card title="NSLookup" size="small" className="mb-4">
             <Space direction="vertical" style={{ width: '100%' }}>
+              {errors.lookup && <Alert type="error" showIcon message={errors.lookup} />}
               <Input placeholder="Hostname or IP" value={lookupQuery} onChange={e => setLookupQuery(e.target.value)} />
               <Select mode="multiple" value={lookupTypes} onChange={setLookupTypes} style={{ width: '100%' }} options={[
                 { value: 'A', label: 'A (IPv4)' }, { value: 'AAAA', label: 'AAAA (IPv6)' }, { value: 'MX', label: 'MX' },
@@ -200,8 +234,9 @@ const ToolsPage: React.FC = () => {
         </Col>
 
         <Col span={12}>
-          <Card title="Wake-on-LAN" size="small" className="mb-4">
+           <Card title="Wake-on-LAN" size="small" className="mb-4">
             <Space direction="vertical" style={{ width: '100%' }}>
+              {errors.wol && <Alert type="error" showIcon message={errors.wol} />}
               <Input placeholder="MAC (AA:BB:CC:DD:EE:FF)" value={wolMac} onChange={e => setWolMac(e.target.value)} />
               <Button type="primary" onClick={handleWoL}>Send Magic Packet</Button>
             </Space>
@@ -209,10 +244,11 @@ const ToolsPage: React.FC = () => {
         </Col>
 
         <Col span={12}>
-          <Card title="iPerf" size="small" className="mb-4">
+           <Card title="iPerf" size="small" className="mb-4">
             <Space direction="vertical" style={{ width: '100%' }}>
+              {errors.iperf && <Alert type="error" showIcon message={errors.iperf} />}
               <Space>
-                <Input placeholder="Target IP" value={iperfTarget} onChange={e => setIperfTarget(e.target.value)} />
+                <Input placeholder={iperfMode === 'server' ? 'Optional target' : 'Server IP or hostname'} value={iperfTarget} onChange={e => setIperfTarget(e.target.value)} />
                 <Tag color="blue">iperf.he.net</Tag>
               </Space>
               <Space>
@@ -228,8 +264,9 @@ const ToolsPage: React.FC = () => {
         </Col>
 
         <Col span={12}>
-          <Card title="Latency Monitor" size="small" className="mb-4">
+           <Card title="Latency Monitor" size="small" className="mb-4">
             <Space direction="vertical" style={{ width: '100%' }}>
+              {errors.latency && <Alert type="error" showIcon message={errors.latency} />}
               <Input placeholder="Target IP" value={latencyTarget} onChange={e => setLatencyTarget(e.target.value)} />
               <Button type="primary" onClick={handleLatencyToggle}>
                 {latencyRunning ? 'Stop Monitoring' : 'Start Monitoring'}
@@ -242,7 +279,8 @@ const ToolsPage: React.FC = () => {
         </Col>
 
         <Col span={12}>
-          <Card title="Network Info" size="small" className="mb-4">
+           <Card title="Network Info" size="small" className="mb-4">
+            {errors.net && <Alert type="error" showIcon message={errors.net} />}
             <Button type="primary" icon={<ThunderboltOutlined />} onClick={handleNetInfo}>Get Network Info</Button>
             {netInfo && (
               <Descriptions size="small" column={1} className="mt-2">

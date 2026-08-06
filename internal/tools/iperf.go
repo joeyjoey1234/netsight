@@ -5,18 +5,49 @@ import (
 	"encoding/json"
 	"fmt"
 	"netsight/internal/model"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 )
 
 func RunIPerf(ctx context.Context, target string, serverMode bool, duration int, iperfBinary string, onResult func(*model.IPerfResult)) error {
+	binary, err := resolveIPerfBinary(iperfBinary)
+	if err != nil {
+		return err
+	}
 	if duration <= 0 {
 		duration = 10
 	}
 
 	if serverMode {
-		return runIPerfServer(ctx, iperfBinary)
+		return runIPerfServer(ctx, binary)
 	}
-	return runIPerfClient(ctx, target, duration, iperfBinary, onResult)
+	return runIPerfClient(ctx, target, duration, binary, onResult)
+}
+
+func resolveIPerfBinary(path string) (string, error) {
+	if path == "" {
+		path = "iperf3"
+	}
+	if filepath.IsAbs(path) {
+		if _, err := os.Stat(path); err != nil {
+			return "", fmt.Errorf("iperf3 unavailable: %w", err)
+		}
+		return path, nil
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), path)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if found, err := exec.LookPath(path); err == nil {
+			return found, nil
+		}
+	}
+	return "", fmt.Errorf("iperf3 unavailable: binary %q was not found", path)
 }
 
 func runIPerfServer(ctx context.Context, binary string) error {
@@ -43,6 +74,9 @@ func runIPerfClient(ctx context.Context, target string, duration int, binary str
 
 	if onResult != nil {
 		result := parseIPerfJSON(output)
+		if result == nil {
+			return fmt.Errorf("iperf3 returned invalid JSON")
+		}
 		onResult(result)
 	}
 
@@ -55,25 +89,25 @@ func parseIPerfJSON(data []byte) *model.IPerfResult {
 	var raw struct {
 		End struct {
 			SumSent struct {
-				Bytes   int64   `json:"bytes"`
-				Seconds float64 `json:"seconds"`
+				Bytes         int64   `json:"bytes"`
+				Seconds       float64 `json:"seconds"`
 				BitsPerSecond float64 `json:"bits_per_second"`
 			} `json:"sum_sent"`
 			SumReceived struct {
-				Bytes   int64   `json:"bytes"`
-				Seconds float64 `json:"seconds"`
+				Bytes         int64   `json:"bytes"`
+				Seconds       float64 `json:"seconds"`
 				BitsPerSecond float64 `json:"bits_per_second"`
 			} `json:"sum_received"`
 			Sum struct {
-				JitterMs     float64 `json:"jitter_ms"`
-				LostPackets  int     `json:"lost_packets"`
-				Packets      int     `json:"packets"`
+				JitterMs    float64 `json:"jitter_ms"`
+				LostPackets int     `json:"lost_packets"`
+				Packets     int     `json:"packets"`
 			} `json:"sum"`
 		} `json:"end"`
 	}
 
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return result
+		return nil
 	}
 
 	result.Interval = raw.End.SumSent.Seconds

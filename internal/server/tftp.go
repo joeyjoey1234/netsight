@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"netsight/internal/model"
 	"os"
 	"path/filepath"
-	"netsight/internal/model"
+	"strings"
 	"time"
 )
 
@@ -67,6 +68,10 @@ func startTFTP(ctx context.Context, config *model.ServerConfig, onStatus func(*m
 			continue
 		}
 
+		if n < 2 {
+			sendTFTPError(conn, remoteAddr, 4, "Malformed request")
+			continue
+		}
 		opcode := uint16(buf[0])<<8 | uint16(buf[1])
 
 		switch opcode {
@@ -79,6 +84,10 @@ func startTFTP(ctx context.Context, config *model.ServerConfig, onStatus func(*m
 }
 
 func handleTFTPRead(ctx context.Context, conn *net.UDPConn, remoteAddr *net.UDPAddr, packet []byte, rootDir string) {
+	if len(packet) < 3 {
+		sendTFTPError(conn, remoteAddr, 4, "Malformed request")
+		return
+	}
 	// Parse filename from RRQ packet
 	filename := ""
 	for i := 2; i < len(packet); i++ {
@@ -94,8 +103,8 @@ func handleTFTPRead(ctx context.Context, conn *net.UDPConn, remoteAddr *net.UDPA
 	}
 
 	// Prevent directory traversal
-	cleanPath := filepath.Clean(filepath.Join(rootDir, filename))
-	if !filepath.HasPrefix(cleanPath, filepath.Clean(rootDir)) {
+	cleanPath, ok := safeTFTPPath(rootDir, filename)
+	if !ok {
 		sendTFTPError(conn, remoteAddr, 2, "Access denied")
 		return
 	}
@@ -155,65 +164,86 @@ func handleTFTPRead(ctx context.Context, conn *net.UDPConn, remoteAddr *net.UDPA
 }
 
 func handleTFTPWrite(ctx context.Context, conn *net.UDPConn, remoteAddr *net.UDPAddr, packet []byte, rootDir string) {
-	// Parse filename from WRQ packet
-	filename := ""
-	for i := 2; i < len(packet); i++ {
-		if packet[i] == 0 {
-			filename = string(packet[2:i])
-			break
-		}
-	}
-
-	if filename == "" {
-		sendTFTPError(conn, remoteAddr, 0, "No filename specified")
-		return
-	}
-
-	// Prevent directory traversal
-	cleanPath := filepath.Clean(filepath.Join(rootDir, filename))
-	if !filepath.HasPrefix(cleanPath, filepath.Clean(rootDir)) {
-		sendTFTPError(conn, remoteAddr, 2, "Access denied")
-		return
-	}
-
-	// Create directory if needed
-	os.MkdirAll(filepath.Dir(cleanPath), 0755)
-
-	file, err := os.Create(cleanPath)
-	if err != nil {
-		sendTFTPError(conn, remoteAddr, 0, "Cannot create file")
-		return
-	}
-	defer file.Close()
-
-	// Send ACK 0 to start transfer
-	ackPacket := []byte{0x00, tftpACK, 0x00, 0x00}
-	conn.WriteToUDP(ackPacket, remoteAddr)
-
-	dataBuf := make([]byte, 516)
-	for {
-		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		n, _, err := conn.ReadFromUDP(dataBuf)
-		if err != nil {
-			return // Timeout — transfer complete or failed
+	// TFTP writes are disabled until an explicit authenticated write policy exists.
+	sendTFTPError(conn, remoteAddr, 2, "Writes are disabled")
+	return
+	/*
+		// Parse filename from WRQ packet
+		filename := ""
+		for i := 2; i < len(packet); i++ {
+			if packet[i] == 0 {
+				filename = string(packet[2:i])
+				break
+			}
 		}
 
-		if n < 4 || dataBuf[1] != tftpDATA {
-			continue
-		}
-
-		block := uint16(dataBuf[2])<<8 | uint16(dataBuf[3])
-		file.Write(dataBuf[4:n])
-
-		// Send ACK
-		ackPacket := []byte{0x00, tftpACK, byte(block >> 8), byte(block)}
-		conn.WriteToUDP(ackPacket, remoteAddr)
-
-		// If data block < 512, transfer complete
-		if n < 516 {
+		if filename == "" {
+			sendTFTPError(conn, remoteAddr, 0, "No filename specified")
 			return
 		}
+
+		// Prevent directory traversal
+		cleanPath := filepath.Clean(filepath.Join(rootDir, filename))
+		if !filepath.HasPrefix(cleanPath, filepath.Clean(rootDir)) {
+			sendTFTPError(conn, remoteAddr, 2, "Access denied")
+			return
+		}
+
+		// Create directory if needed
+		os.MkdirAll(filepath.Dir(cleanPath), 0755)
+
+		file, err := os.Create(cleanPath)
+		if err != nil {
+			sendTFTPError(conn, remoteAddr, 0, "Cannot create file")
+			return
+		}
+		defer file.Close()
+
+		// Send ACK 0 to start transfer
+		ackPacket := []byte{0x00, tftpACK, 0x00, 0x00}
+		conn.WriteToUDP(ackPacket, remoteAddr)
+
+		dataBuf := make([]byte, 516)
+		for {
+			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			n, _, err := conn.ReadFromUDP(dataBuf)
+			if err != nil {
+				return // Timeout — transfer complete or failed
+			}
+
+			if n < 4 || dataBuf[1] != tftpDATA {
+				continue
+			}
+
+			block := uint16(dataBuf[2])<<8 | uint16(dataBuf[3])
+			file.Write(dataBuf[4:n])
+
+			// Send ACK
+			ackPacket := []byte{0x00, tftpACK, byte(block >> 8), byte(block)}
+			conn.WriteToUDP(ackPacket, remoteAddr)
+
+			// If data block < 512, transfer complete
+			if n < 516 {
+				return
+			}
+		}
+	*/
+}
+
+func safeTFTPPath(rootDir, name string) (string, bool) {
+	if name == "" || filepath.IsAbs(name) {
+		return "", false
 	}
+	root, err := filepath.Abs(rootDir)
+	if err != nil {
+		return "", false
+	}
+	path, err := filepath.Abs(filepath.Join(root, filepath.FromSlash(name)))
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, path)
+	return path, err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 func sendTFTPError(conn *net.UDPConn, addr *net.UDPAddr, code uint16, msg string) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"netsight/internal/model"
 	"sync"
+	"time"
 )
 
 // StatusCallback is called when a server's status changes
@@ -34,10 +35,20 @@ func NewManager(onStatus StatusCallback) *Manager {
 
 // StartServer launches a server by type
 func (m *Manager) StartServer(serverType string, config *model.ServerConfig) error {
+	if config == nil {
+		return fmt.Errorf("server config is required")
+	}
+	switch serverType {
+	case "tftp", "http", "ftp", "syslog", "netcat", "dhcp", "ntp", "dns":
+	default:
+		return fmt.Errorf("unknown server type: %s", serverType)
+	}
+	if config.Port < 0 || config.Port > 65535 {
+		return fmt.Errorf("invalid server port: %d", config.Port)
+	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if inst, exists := m.servers[serverType]; exists && inst.running {
+	if inst, exists := m.servers[serverType]; exists && (inst.running || inst.state.Status == "starting") {
+		m.mu.Unlock()
 		return fmt.Errorf("%s server already running", serverType)
 	}
 
@@ -55,47 +66,50 @@ func (m *Manager) StartServer(serverType string, config *model.ServerConfig) err
 	}
 	m.servers[serverType] = inst
 
-	m.emitStatus(state)
+	m.mu.Unlock()
+	m.emitStatus(cloneState(state))
 
 	go func() {
 		var err error
 		switch serverType {
 		case "tftp":
-			err = startTFTP(ctx, config, func(s *model.ServerState) { m.emitStatus(s) })
+			err = startTFTP(ctx, config, func(s *model.ServerState) { m.markRunning(serverType, inst, s) })
 		case "http":
-			err = startHTTP(ctx, config, func(s *model.ServerState) { m.emitStatus(s) })
+			err = startHTTP(ctx, config, func(s *model.ServerState) { m.markRunning(serverType, inst, s) })
 		case "ftp":
-			err = startFTP(ctx, config, func(s *model.ServerState) { m.emitStatus(s) })
+			err = startFTP(ctx, config, func(s *model.ServerState) { m.markRunning(serverType, inst, s) })
 		case "syslog":
-			err = startSyslog(ctx, config, func(s *model.ServerState) { m.emitStatus(s) })
+			err = startSyslog(ctx, config, func(s *model.ServerState) { m.markRunning(serverType, inst, s) })
 		case "netcat":
-			err = startNetcat(ctx, config, func(s *model.ServerState) { m.emitStatus(s) })
+			err = startNetcat(ctx, config, func(s *model.ServerState) { m.markRunning(serverType, inst, s) })
 		case "dhcp":
-			err = startDHCP(ctx, config, func(s *model.ServerState) { m.emitStatus(s) })
+			err = startDHCP(ctx, config, func(s *model.ServerState) { m.markRunning(serverType, inst, s) })
 		case "ntp":
-			err = startNTP(ctx, config, func(s *model.ServerState) { m.emitStatus(s) })
+			err = startNTP(ctx, config, func(s *model.ServerState) { m.markRunning(serverType, inst, s) })
 		case "dns":
-			err = startDNS(ctx, config, func(s *model.ServerState) { m.emitStatus(s) })
+			err = startDNS(ctx, config, func(s *model.ServerState) { m.markRunning(serverType, inst, s) })
 		default:
 			err = fmt.Errorf("unknown server type: %s", serverType)
 		}
 
 		m.mu.Lock()
+		if current, ok := m.servers[serverType]; !ok || current != inst {
+			m.mu.Unlock()
+			return
+		}
 		inst.running = false
-		if err != nil {
+		if ctx.Err() != nil {
+			inst.state.Status = "stopped"
+		} else if err != nil {
 			inst.state.Status = "error"
 			inst.state.Error = err.Error()
 		} else {
 			inst.state.Status = "stopped"
 		}
+		finalState := cloneState(inst.state)
 		m.mu.Unlock()
-		m.emitStatus(inst.state)
+		m.emitStatus(finalState)
 	}()
-
-	m.mu.Lock()
-	inst.running = true
-	inst.state.Status = "running"
-	m.mu.Unlock()
 
 	return nil
 }
@@ -103,17 +117,19 @@ func (m *Manager) StartServer(serverType string, config *model.ServerConfig) err
 // StopServer stops a running server
 func (m *Manager) StopServer(serverType string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	inst, exists := m.servers[serverType]
-	if !exists || !inst.running {
+	if !exists || (!inst.running && inst.state.Status != "starting") {
+		m.mu.Unlock()
 		return fmt.Errorf("%s server not running", serverType)
 	}
 
 	inst.cancel()
 	inst.running = false
 	inst.state.Status = "stopped"
-	m.emitStatus(inst.state)
+	state := cloneState(inst.state)
+	m.mu.Unlock()
+	m.emitStatus(state)
 	return nil
 }
 
@@ -124,7 +140,7 @@ func (m *Manager) GetStatus() []*model.ServerState {
 
 	states := make([]*model.ServerState, 0, len(m.servers))
 	for _, inst := range m.servers {
-		states = append(states, inst.state)
+		states = append(states, cloneState(inst.state))
 	}
 	return states
 }
@@ -141,16 +157,42 @@ func (m *Manager) IsRunning(serverType string) bool {
 // Shutdown stops all running servers
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	var states []*model.ServerState
 	for _, inst := range m.servers {
-		if inst.running {
+		if inst.running || inst.state.Status == "starting" {
 			inst.cancel()
 			inst.running = false
 			inst.state.Status = "stopped"
-			m.emitStatus(inst.state)
+			states = append(states, cloneState(inst.state))
 		}
 	}
+	m.mu.Unlock()
+	for _, state := range states {
+		m.emitStatus(state)
+	}
+}
+
+func (m *Manager) markRunning(serverType string, inst *serverInstance, state *model.ServerState) {
+	m.mu.Lock()
+	if current, ok := m.servers[serverType]; !ok || current != inst {
+		m.mu.Unlock()
+		return
+	}
+	if inst.state.Status == "stopped" {
+		m.mu.Unlock()
+		return
+	}
+	inst.running = true
+	*inst.state = *state
+	inst.state.StartedAt = time.Now()
+	copy := cloneState(inst.state)
+	m.mu.Unlock()
+	m.emitStatus(copy)
+}
+
+func cloneState(state *model.ServerState) *model.ServerState {
+	copy := *state
+	return &copy
 }
 
 func (m *Manager) emitStatus(state *model.ServerState) {

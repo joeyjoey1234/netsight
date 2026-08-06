@@ -3,8 +3,8 @@ package capture
 import (
 	"context"
 	"fmt"
-	"netsight/internal/model"
 	"net"
+	"netsight/internal/model"
 	"sync"
 	"time"
 
@@ -26,6 +26,7 @@ type Engine struct {
 	mu          sync.Mutex
 	iface       string
 	filter      string
+	handle      *pcap.Handle
 	packetCount int64
 	byteCount   int64
 }
@@ -50,8 +51,21 @@ func (e *Engine) Start(iface string, filter string, handler PacketHandler, stats
 	e.isRunning = true
 	e.packetCount = 0
 	e.byteCount = 0
+	handle, err := pcap.OpenLive(iface, 65536, true, pcap.BlockForever)
+	if err != nil {
+		e.isRunning = false
+		return fmt.Errorf("packet capture unavailable: %w", err)
+	}
+	e.handle = handle
+	if filter != "" {
+		if err := handle.SetBPFFilter(filter); err != nil {
+			handle.Close()
+			e.isRunning = false
+			return fmt.Errorf("invalid capture filter: %w", err)
+		}
+	}
 
-	go e.captureLoop()
+	go e.captureLoop(handle)
 
 	go e.statsLoop()
 
@@ -64,6 +78,10 @@ func (e *Engine) Stop() {
 	if e.cancel != nil {
 		e.cancel()
 	}
+	if e.handle != nil {
+		e.handle.Close()
+		e.handle = nil
+	}
 	e.isRunning = false
 }
 
@@ -73,20 +91,8 @@ func (e *Engine) IsRunning() bool {
 	return e.isRunning
 }
 
-func (e *Engine) captureLoop() {
-	handle, err := pcap.OpenLive(e.iface, 65536, true, pcap.BlockForever)
-	if err != nil {
-		e.fallbackCaptureLoop()
-		return
-	}
+func (e *Engine) captureLoop(handle *pcap.Handle) {
 	defer handle.Close()
-
-	if e.filter != "" {
-		if err := handle.SetBPFFilter(e.filter); err != nil {
-			e.fallbackCaptureLoop()
-			return
-		}
-	}
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
@@ -108,38 +114,12 @@ func (e *Engine) captureLoop() {
 	}
 }
 
-func (e *Engine) fallbackCaptureLoop() {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	count := 0
-
-	for {
-		select {
-		case <-e.ctx.Done():
-			return
-		case <-ticker.C:
-			count++
-			e.mu.Lock()
-			e.packetCount++
-			e.byteCount += int64(64 + (count%1400))
-			e.mu.Unlock()
-
-			if e.handler != nil {
-				e.handler(&model.PacketSummary{
-					Number:    count,
-					Timestamp: time.Now().Format("15:04:05.000"),
-					SrcMAC:    "aa:bb:cc:dd:ee:ff",
-					DstMAC:    "ff:ee:dd:cc:bb:aa",
-					SrcIP:     "192.168.1.100",
-					DstIP:     "192.168.1.1",
-					Protocol:  "TCP",
-					SrcPort:   54321,
-					DstPort:   443,
-					Length:    64 + (count % 1400),
-					Info:      "Fallback test data — no live capture interface available",
-				})
-			}
-		}
+func (e *Engine) finishWithError(err error) {
+	e.mu.Lock()
+	e.isRunning = false
+	e.mu.Unlock()
+	if e.handler != nil {
+		e.handler(&model.PacketSummary{Protocol: "ERROR", Info: err.Error()})
 	}
 }
 

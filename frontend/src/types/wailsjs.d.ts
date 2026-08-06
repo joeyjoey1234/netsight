@@ -2,7 +2,7 @@
 // These files are generated at build time by `wails generate module`.
 // This file provides TypeScript with type information so the imports compile.
 
-declare module '../../wailsjs/go/main/App' {
+declare module '../../wailsjs/go/wailsbridge/Bridge' {
   export function StartScan(input: { subnet: string; preset: string }): Promise<string>;
   export function StopScan(scanId: string): Promise<void>;
   export function GetDevices(): Promise<any[]>;
@@ -27,9 +27,9 @@ declare module '../../wailsjs/go/main/App' {
   export function Greet(name: string): Promise<string>;
 }
 
-declare module '../../wailsjs/runtime' {
+declare module '../../wailsjs/runtime/runtime' {
   export function EventsOn(event: string, callback: (...args: any[]) => void): void;
-  export function EventsOff(event: string): void;
+  export function EventsOff(event: string, callback?: (...args: any[]) => void): void;
   export function EventsOnce(event: string, callback: (...args: any[]) => void): void;
   export function EventsEmit(event: string, ...args: any[]): void;
 }

@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Form, Input, Button, Switch, Space, Select, Modal, message, Typography } from 'antd';
+import { Card, Form, Input, Button, Switch, Space, Select, message, Typography, Alert } from 'antd';
 import { useThemeStore } from '../stores/themeStore';
 import { createProject, loadProject, listProjects } from '../hooks/api';
+import { useProjectStore } from '../stores/projectStore';
+import { useScanStore } from '../stores/scanStore';
+import { useServerStore } from '../stores/serverStore';
+import type { Project } from '../types';
 
 const { Text } = Typography;
 
@@ -10,39 +14,35 @@ const SettingsPage: React.FC = () => {
   const [projectName, setProjectName] = useState('');
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { setCurrentProject, setProjects: setStoreProjects, upsertProject } = useProjectStore();
+  const { setScanId, setDevices, setScans, setFindings, setStatus, setProgress } = useScanStore();
+  const { hydrate: hydrateServers } = useServerStore();
 
   useEffect(() => {
-    listProjects().then(setProjects).catch(() => setProjects([]));
+    listProjects().then((items) => { setProjects(items || []); setStoreProjects(items || []); })
+      .catch((err: any) => { setProjects([]); setError(`Unable to list projects: ${err?.message || err}`); });
   }, []);
 
   const handleSave = async () => {
-    if (!projectName) return;
+    if (!projectName.trim()) { setError('Enter a project name before saving.'); return; }
     const existing = projects.find((p: any) => p.name === projectName);
     if (existing) {
-      Modal.confirm({
-        title: 'Overwrite Project?',
-        content: `A project named "${projectName}" already exists. Do you want to overwrite it?`,
-        okText: 'Overwrite',
-        okType: 'danger',
-        cancelText: 'Cancel',
-        onOk: async () => {
-          try {
-            await createProject(projectName);
-            message.success(`Project "${projectName}" overwritten`);
-            listProjects().then(setProjects).catch(() => {});
-          } catch (err: any) {
-            message.error(err?.message || 'Failed to overwrite project');
-          }
-        },
-      });
+      setSelectedProjectId(existing.id);
+      setError(`Project "${projectName}" already exists. Load it or choose a different name; creating another would duplicate it.`);
       return;
     }
     try {
-      await createProject(projectName);
+      const created = await createProject(projectName) as Project;
+      upsertProject(created);
+      setCurrentProject(created);
       message.success(`Project "${projectName}" created`);
-      listProjects().then(setProjects).catch(() => {});
+      const refreshed = await listProjects();
+      setProjects(refreshed || []);
+      setStoreProjects(refreshed || []);
+      setError(null);
     } catch (err: any) {
-      message.error(err?.message || 'Failed to create project');
+      setError(err?.message || 'Failed to create project');
     }
   };
 
@@ -50,15 +50,35 @@ const SettingsPage: React.FC = () => {
     if (!selectedProjectId) return;
     try {
       const project = await loadProject(selectedProjectId);
+      if (!project) throw new Error('The backend returned no project for that ID.');
+      const hydrated = {
+        ...project,
+        settings: {
+          defaultSubnet: project.settings?.defaultSubnet || '',
+          scanPorts: project.settings?.scanPorts || [],
+          excludeIps: project.settings?.excludeIps || [],
+        },
+      } as Project;
+      setCurrentProject(hydrated);
+      upsertProject(hydrated);
+      setScanId(null);
+      setDevices((hydrated.devices || []).map((device: any) => ({ ...device, ips: device.ips || [], vlans: device.vlans || [] })));
+      setScans(hydrated.scans || []);
+      setFindings(hydrated.findings || []);
+      setStatus('completed');
+      setProgress(100);
+      hydrateServers((project as any).servers);
+      setError(null);
       message.success(`Project loaded: ${project?.name || selectedProjectId}`);
     } catch (err: any) {
-      message.error(err?.message || 'Failed to load project');
+      setError(err?.message || 'Failed to load project');
     }
   };
 
   return (
     <div className="h-full p-2 overflow-y-auto">
       <Card title="Project" size="small" className="mb-4">
+        {error && <Alert className="mb-3" type="error" showIcon message={error} />}
         <Form layout="vertical">
           <Form.Item label="Existing Projects">
             <Space>
