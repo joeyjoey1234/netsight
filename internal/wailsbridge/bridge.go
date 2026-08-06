@@ -26,6 +26,7 @@ type Bridge struct {
 	serverManager   *server.Manager
 	netInfo         []*model.InterfaceInfo
 	activeProjectID string
+	activeScanID    string
 	mu              sync.Mutex
 	pingCancel      context.CancelFunc
 	traceCancel     context.CancelFunc
@@ -84,6 +85,13 @@ type ScanInput struct {
 }
 
 func (b *Bridge) StartScan(input ScanInput) (string, error) {
+	b.mu.Lock()
+	if b.activeScanID != "" {
+		active := b.activeScanID
+		b.mu.Unlock()
+		return "", fmt.Errorf("a scan is already running: %s", active)
+	}
+	b.mu.Unlock()
 	projectID, err := b.ensureProject(input.ProjectID)
 	if err != nil {
 		return "", err
@@ -107,6 +115,7 @@ func (b *Bridge) StartScan(input ScanInput) (string, error) {
 	}
 	b.scanner.OnStarted = func(sc *model.Scan) {
 		b.mu.Lock()
+		b.activeScanID = sc.ID
 		b.scanStates[sc.ID] = sc
 		b.mu.Unlock()
 		if err := b.store.SaveScan(projectID, sc); err != nil {
@@ -121,6 +130,9 @@ func (b *Bridge) StartScan(input ScanInput) (string, error) {
 	b.scanner.OnError = func(scanID string, scanErr error) { runtime.EventsEmit(b.ctx, "scan:error", scanID, scanErr.Error()) }
 	b.scanner.OnComplete = func(scanID string, status string) {
 		b.mu.Lock()
+		if b.activeScanID == scanID {
+			b.activeScanID = ""
+		}
 		if sc := b.scanStates[scanID]; sc != nil {
 			sc.Status = status
 			sc.Duration = time.Since(sc.Timestamp)
@@ -137,6 +149,12 @@ func (b *Bridge) StartScan(input ScanInput) (string, error) {
 }
 
 func (b *Bridge) StopScan(scanID string) error {
+	b.mu.Lock()
+	active := b.activeScanID
+	b.mu.Unlock()
+	if active != "" && scanID != active {
+		return fmt.Errorf("scan is not active: %s", scanID)
+	}
 	if b.scanner != nil {
 		return b.scanner.StopScan(scanID)
 	}

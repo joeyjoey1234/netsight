@@ -137,12 +137,13 @@ const TopologyPage: React.FC = () => {
   }, [devices]);
 
   const runScan = async (subnet: string, preset: string) => {
+    if (isRunning) return;
+    setStatus('running');
     try {
       reset();
       setLinks([]);
       const id = await startScan(subnet, preset, currentProject?.id || '');
       setScanId(id);
-      setStatus('running');
       setProgress(0);
     } catch (err: any) {
       setStatus('failed');

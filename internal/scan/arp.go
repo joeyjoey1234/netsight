@@ -2,7 +2,6 @@ package scan
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"os/exec"
 	"strings"
@@ -16,6 +15,7 @@ func ARPScan(ctx context.Context, subnet string) (map[string]string, error) {
 		return nil, err
 	}
 
+	cacheEntries := readARPCache()
 	table := make(map[string]string)
 	var mu sync.Mutex
 
@@ -42,7 +42,10 @@ func ARPScan(ctx context.Context, subnet string) (map[string]string, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			mac := arpLookup(target)
+			mac := ""
+			if cached, ok := cacheEntries[target.String()]; ok {
+				mac = cached
+			}
 			if mac != "" {
 				mu.Lock()
 				table[target.String()] = mac
@@ -83,13 +86,6 @@ func arpLookup(ip net.IP) string {
 	}
 	conn.Close()
 
-	time.Sleep(50 * time.Millisecond)
-
-	cacheEntries := readARPCache()
-	if mac, ok := cacheEntries[ip.String()]; ok {
-		return mac
-	}
-
 	return ""
 }
 
@@ -129,7 +125,5 @@ func isValidMAC(mac string) bool {
 }
 
 func arpLookupByPing(ip net.IP) {
-	exec.Command("ping", "-c", "1", "-W", "1", ip.String()).Run()
+	_, _ = exec.Command("ping", "-c", "1", "-W", "1", ip.String()).Output()
 }
-
-var _ = fmt.Println
