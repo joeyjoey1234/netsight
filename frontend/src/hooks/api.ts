@@ -11,8 +11,8 @@ export function onEvent(event: string, callback: (...args: any[]) => void): () =
   return () => EventsOff(event, callback);
 }
 
-export function startScan(subnet: string, preset: string): Promise<string> {
-  return Backend.StartScan({ subnet, preset });
+export function startScan(subnet: string, preset: string, projectId = ''): Promise<string> {
+  return Backend.StartScan({ subnet, preset, projectId });
 }
 
 export function stopScan(scanId: string): Promise<void> {

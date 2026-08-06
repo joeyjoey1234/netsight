@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { Card, Button, Space, Input, Select, Progress, Drawer, Descriptions, Tag, Empty, Typography, message, Alert } from 'antd';
 import { PlayCircleOutlined, StopOutlined, ReloadOutlined, ExportOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useScanStore } from '../stores/scanStore';
+import { useProjectStore } from '../stores/projectStore';
 import { useThemeStore } from '../stores/themeStore';
 import TopologyMap from '../components/topology/TopologyMap';
 import { startScan, stopScan, exportDrawIO, exportPDF, onEvent, getAvailableSubnets, getDevices } from '../hooks/api';
@@ -45,6 +46,7 @@ const TopologyPage: React.FC = () => {
   const { activeScanId, scanStatus, scanProgress, devices,
           setScanId, setProgress, setStatus, addDevice, setDevices, addFinding, reset } = useScanStore();
   const { isDark } = useThemeStore();
+  const currentProject = useProjectStore((state) => state.currentProject);
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [selectedSubnet, setSelectedSubnet] = useState('192.168.1.0/24');
   const [availableSubnets, setAvailableSubnets] = useState<string[]>([]);
@@ -138,7 +140,7 @@ const TopologyPage: React.FC = () => {
     try {
       reset();
       setLinks([]);
-      const id = await startScan(subnet, preset);
+      const id = await startScan(subnet, preset, currentProject?.id || '');
       setScanId(id);
       setStatus('running');
       setProgress(0);

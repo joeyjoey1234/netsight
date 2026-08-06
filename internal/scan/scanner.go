@@ -70,7 +70,11 @@ func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset s
 			o.OnError(scanID, err)
 		}
 		if o.OnComplete != nil {
-			o.OnComplete(scanID, "failed")
+			status := "failed"
+			if ctx.Err() != nil {
+				status = "cancelled"
+			}
+			o.OnComplete(scanID, status)
 		}
 		return
 	}
@@ -80,6 +84,12 @@ func (o *ScanOrchestrator) runScan(ctx context.Context, scanID, subnet, preset s
 	}
 	arpTable, err := ARPScan(ctx, subnet)
 	if err != nil {
+		if ctx.Err() != nil {
+			if o.OnComplete != nil {
+				o.OnComplete(scanID, "cancelled")
+			}
+			return
+		}
 		if o.OnError != nil {
 			o.OnError(scanID, err)
 		}

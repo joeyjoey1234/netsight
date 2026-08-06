@@ -159,8 +159,12 @@ func (b *Bridge) GetScanHistory() ([]*model.Scan, error) {
 
 // === Packet Capture ===
 func (b *Bridge) StartPacketCapture(iface string, filter string) (string, error) {
+	deviceName, err := capture.ResolveInterfaceName(iface)
+	if err != nil {
+		return "", err
+	}
 	b.captureEngine = capture.NewEngine()
-	err := b.captureEngine.Start(iface, filter,
+	err = b.captureEngine.Start(deviceName, filter,
 		func(packet *model.PacketSummary) {
 			runtime.EventsEmit(b.ctx, "capture:packet", packet)
 		},

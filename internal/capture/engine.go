@@ -17,6 +17,21 @@ type PacketHandler func(packet *model.PacketSummary)
 
 type StatsHandler func(packetsPerSec, bytesPerSec int64)
 
+// ResolveInterfaceName accepts either an Npcap device name or the friendly
+// adapter name shown by net.Interfaces and returns the pcap device identifier.
+func ResolveInterfaceName(name string) (string, error) {
+	devices, err := pcap.FindAllDevs()
+	if err != nil {
+		return "", err
+	}
+	for _, device := range devices {
+		if device.Name == name || device.Description == name {
+			return device.Name, nil
+		}
+	}
+	return "", fmt.Errorf("capture interface not found: %s", name)
+}
+
 type Engine struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
